@@ -7,7 +7,7 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import f1_score, accuracy_score
 
 rng = np.random.RandomState(31)
 output_dir = "../results"
@@ -118,13 +118,15 @@ def logisitic_regression_without_penalty(data_train_scaled, data_test_scaled, y_
     lr.fit(data_train_scaled, y_train)
     y_pred = lr.predict(data_test_scaled)
     accuracy = accuracy_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
     n = len(y_test)
     ci = 1.96 * np.sqrt((accuracy * (1 - accuracy)) / n)
 
     ci_lwr = (accuracy - ci) 
     ci_hi= accuracy + ci
 
-    return accuracy, ci_lwr, ci_hi
+
+    return accuracy, ci_lwr, ci_hi, f1
 
 def logisitic_regression_with_penallty(data_train_scaled, data_test_scaled, y_train, y_test):
     results = []
@@ -153,6 +155,8 @@ def logisitic_regression_with_penallty(data_train_scaled, data_test_scaled, y_tr
         accuracy = accuracy_score(y_test, y_pred)
         n = len(y_test)
         
+        f1 = f1_score(y_test, y_pred) 
+
         # Calculate 95% Confidence Interval (Normal Approximation)
         ci_half_width = 1.96 * np.sqrt((accuracy * (1 - accuracy)) / n)
         ci_lower = accuracy - ci_half_width
@@ -162,7 +166,8 @@ def logisitic_regression_with_penallty(data_train_scaled, data_test_scaled, y_tr
             'Penalty': name,
             'Accuracy': f"{accuracy:.4f}",
             'CI_Lower': f"{ci_lower:.4f}",
-            'CI_Upper': f"{ci_upper:.4f}"
+            'CI_Upper': f"{ci_upper:.4f}",
+            'f1_scores': f"{f1:.4f}"
         })
 
     return results
@@ -177,15 +182,16 @@ if __name__ == "__main__":
     plot_disease_progression(target_df)
 
     data_train_scaled, data_test_scaled, y_train, y_test = prepare_data(target_df)
-    accuracy, lwr, hi = logisitic_regression_without_penalty(data_train_scaled, data_test_scaled, y_train, y_test)
+    accuracy, lwr, hi, f1 = logisitic_regression_without_penalty(data_train_scaled, data_test_scaled, y_train, y_test)
 
     print("\n--- Summary Table (without penalty) ---")
     print(f"Accuracy: {accuracy:.4f}")
     print(f"95% CI: {lwr:.4f} - {hi:.4f}")
+    print(f"F1-Score: {f1:.2f}")
 
 
     results_with_penalty = logisitic_regression_with_penallty(data_train_scaled, data_test_scaled, y_train, y_test)
 
     print("\n--- Summary Table (with penalty) ---")
     for r in results_with_penalty:
-        print(f"| {r['Penalty']:<15} | Acc: {r['Accuracy']} | 95% CI: {r['CI_Lower']} - {r['CI_Upper']} |")
+        print(f"| {r['Penalty']:<15} | Acc: {r['Accuracy']} | 95% CI: {r['CI_Lower']} - {r['CI_Upper']} | f1_score: {r['f1_scores']}")
