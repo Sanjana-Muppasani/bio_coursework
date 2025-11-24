@@ -52,8 +52,24 @@ def create_graph(normalized_matrix):
     graph.add_vertices(num_sequences)
     graph.add_edges(edges)
 
-
     return graph
+
+def get_global_metrics_table(graph):
+    """
+    Returns a small DataFrame summarizing the whole network structure.
+    """
+    metrics = {
+        "Node_Count": graph.vcount(),
+        "Edge_Count": graph.ecount(),
+        "Density": graph.density(), # How many edges exist vs how many are possible
+        "Transitivity_Global": graph.transitivity_undirected(), # Overall clustering
+        "Diameter": graph.diameter(), # Longest shortest path
+        "Average_Path_Length": graph.average_path_length(),
+        "Connected_Components": len(graph.connected_components())
+    }
+    
+    df = pd.DataFrame([metrics])
+    return df
 
 def community_detection_plotting(graph):
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -82,4 +98,7 @@ if __name__ == "__main__":
     communities = community_detection_plotting(graph)
     print("Communities Detected and file Saved")
 
+    graph_table = get_global_metrics_table(graph)
+    print("-----Graph Properties Table-----")
+    print(graph_table)
 
