@@ -44,10 +44,10 @@ def create_normalized_matrix(similarity_matrix):
 
     return(normalized_matrix)
 
-def create_graph(normalized_matrix):
+def create_graph(normalized_matrix, threshold):
     num_sequences = normalized_matrix.shape[0]
     edges = [(i, j) for i in range(num_sequences) for j in range(i + 1, num_sequences) if
-                normalized_matrix[i, j] > 0.4]
+                normalized_matrix[i, j] > threshold]
     graph = ig.Graph()
     graph.add_vertices(num_sequences)
     graph.add_edges(edges)
@@ -72,15 +72,25 @@ def get_global_metrics_table(graph):
     return df
 
 def community_detection_plotting(graph):
+    np.random.seed(42)  
+    ig.config.random_seed = 42 
+
+    # REMOVE THIS LINE: ig.Graph.Set_attribute_table("default") 
+    # It is obsolete and causes the AttributeError.
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     output_file = os.path.join(script_dir, "../results/network_clusters.png")
 
-    communities = graph.community_infomap()
+    # Community detection (Infomap is generally deterministic but benefits from seed)
+    communities = graph.community_infomap() 
+    
+    # Visualization setup
     rainbow = seaborn.color_palette("husl", len(communities))
     colours = [rainbow[communities.membership[v]] for v in graph.vs.indices]
     graph.vs["color"] = colours
+    
+    # Plotting using the 'fr' layout (which uses ig.config.random_seed)
     ig.plot(graph, bbox=(1280, 1280), layout="fr", target = output_file)
-
 
 if __name__ == "__main__":
     sequences = read_data("../data/sequences.txt.xz")
@@ -92,13 +102,23 @@ if __name__ == "__main__":
     normalized_matrix = create_normalized_matrix(blosum_matrix)
     print("Creating Normalized Matrix")
 
-    graph = create_graph(normalized_matrix=normalized_matrix)
-    print("Creating graph")
+    #optimal threshold
+    graph_optimal = create_graph(normalized_matrix=normalized_matrix, threshold=0.4)
+    print("Creating optimal threshold graph")
+    communities = community_detection_plotting(graph_optimal)
+    print("Communities Detected for optimal threshold and file Saved")
 
-    communities = community_detection_plotting(graph)
-    print("Communities Detected and file Saved")
-
-    graph_table = get_global_metrics_table(graph)
+    graph_table = get_global_metrics_table(graph_optimal)
     print("-----Graph Properties Table-----")
     print(graph_table)
 
+    # #---lower threshold ---
+    # graph_lower = create_graph(normalized_matrix=normalized_matrix, threshold=0.2)
+    # graph_table_lower = get_global_metrics_table(graph_lower)
+    # print("-----Graph Properties Table for Lower Threshold-----")
+    # print(graph_table_lower)
+
+    # graph_higher = create_graph(normalized_matrix=normalized_matrix, threshold=0.8)
+    # graph_table_higher = get_global_metrics_table(graph_higher)
+    # print("-----Graph Properties Table for Higher Threshold-----")
+    # print(graph_table_higher)
