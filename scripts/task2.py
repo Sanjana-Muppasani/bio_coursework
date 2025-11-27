@@ -3,8 +3,9 @@ import tarfile
 import os 
 import numpy as np
 import matplotlib.pyplot as plt 
+from scipy import stats
 import seaborn as sns
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import f1_score, accuracy_score
@@ -100,77 +101,120 @@ def plot_disease_progression(df_final):
 
 
 def prepare_data(df_final):
-    df_final = df_final[df_final["visit"]==1] #only visit 1 for prediction 
+    df_final = df_final[df_final["visit"] == 1] 
     x = df_final.drop(columns=["ID", "MRI_ID", "hand", "visit", "delay", "CDR", "worsened"])
     y = df_final["worsened"]
-    x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.3, stratify=y, random_state=rng)
+    return x, y
 
-    scaler = StandardScaler()
-    scaler.fit(x_train)
-    data_train_scaled = scaler.transform(x_train)
-    data_test_scaled = scaler.transform(x_test)
-    return data_train_scaled, data_test_scaled, y_train, y_test
-
-
-
-def logisitic_regression_without_penalty(data_train_scaled, data_test_scaled, y_train, y_test):
-    lr = LogisticRegression(solver='lbfgs', random_state=rng, max_iter=1000, C=1.0, penalty=None)
-    lr.fit(data_train_scaled, y_train)
-    y_pred = lr.predict(data_test_scaled)
-    accuracy = accuracy_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred)
-    n = len(y_test)
-    ci = 1.96 * np.sqrt((accuracy * (1 - accuracy)) / n)
-
-    ci_lwr = (accuracy - ci) 
-    ci_hi= accuracy + ci
-
-
-    return accuracy, ci_lwr, ci_hi, f1
-
-def logisitic_regression_with_penallty(data_train_scaled, data_test_scaled, y_train, y_test):
+def logisitic_regression_without_penalty(x, y, rng): 
     results = []
 
-    # Define the penalties and their required solvers
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=rng)  
+    K = cv.n_splits
+    df = K - 1
+    t_critical = stats.t.ppf(0.975, df)
+    accuracy_scores = []
+    f1_scores = []
+    for train_index, val_index in cv.split(x, y):
+        x_train, x_val = x.iloc[train_index], x.iloc[val_index]
+        y_train, y_val = y.iloc[train_index], y.iloc[val_index]
+        scaler = StandardScaler()
+        scaler.fit(x_train) 
+        x_train_scaled = scaler.transform(x_train)
+        x_val_scaled = scaler.transform(x_val)
+        lr = LogisticRegression(solver='lbfgs', random_state=rng, max_iter=1000, C=1.0, penalty=None)
+        lr.fit(x_train_scaled, y_train)
+        y_pred_val = lr.predict(x_val_scaled)
+        fold_accuracy = accuracy_score(y_val, y_pred_val)
+        fold_f1 = f1_score(y_val, y_pred_val)
+        accuracy_scores.append(fold_accuracy)
+        f1_scores.append(fold_f1)
+    
+    # 2. Calculate final summary statistics
+    cv_accuracy_mean = np.mean(accuracy_scores)
+    cv_accuracy_std = np.std(accuracy_scores)
+    cv_f1_mean = np.mean(f1_scores)
+    
+    sem_accuracy = cv_accuracy_std / np.sqrt(K)
+    margin_of_error = t_critical * sem_accuracy
+    ci_lower = cv_accuracy_mean - margin_of_error
+    ci_upper = cv_accuracy_mean + margin_of_error
+
+    # --- Store Results ---
+    results.append({
+        'CV_Mean_Accuracy': f"{cv_accuracy_mean:.4f}",
+        'CV_Mean_f1': f"{cv_f1_mean:.4f}",
+        'CI_Lower_95': f"{ci_lower:.4f}",
+        'CI_Upper_95': f"{ci_upper:.4f}"
+    })
+
+    return results
+
+def logisitic_regression_with_penalty(X, y,rng):
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=rng)  
+    results = []
+    
     penalties_config = [
         {'penalty': 'l2', 'solver': 'lbfgs', 'name': 'L2 (Ridge)'},
         {'penalty': 'l1', 'solver': 'liblinear', 'name': 'L1 (Lasso)'}
     ]
 
     for config in penalties_config:
+        accuracy_scores = []
+        f1_scores = []
+        
         penalty = config['penalty']
         solver = config['solver']
         name = config['name']
-        lr = LogisticRegression(
-            solver=solver, 
-            penalty=penalty, 
-            C=1.0, 
-            random_state=rng, 
-            max_iter=1000
-        )
-        lr.fit(data_train_scaled, y_train)
-        y_pred = lr.predict(data_test_scaled)
-        
-        # 4. Evaluate
-        accuracy = accuracy_score(y_test, y_pred)
-        n = len(y_test)
-        
-        f1 = f1_score(y_test, y_pred) 
 
-        # Calculate 95% Confidence Interval (Normal Approximation)
-        ci_half_width = 1.96 * np.sqrt((accuracy * (1 - accuracy)) / n)
-        ci_lower = accuracy - ci_half_width
-        ci_upper = accuracy + ci_half_width
+        K = cv.n_splits
+        df = K - 1
+        t_critical = stats.t.ppf(0.975, df)
+        
+        for train_index, val_index in cv.split(X, y):
+            
+            X_train, X_val = X.iloc[train_index], X.iloc[val_index]
+            y_train, y_val = y.iloc[train_index], y.iloc[val_index]
+            
+            scaler = StandardScaler()
+            scaler.fit(X_train)
+            X_train_scaled = scaler.transform(X_train)
+            X_val_scaled = scaler.transform(X_val)
+            
+            lr = LogisticRegression(
+                solver=solver, 
+                penalty=penalty, 
+                C=1.0, 
+                random_state=rng, 
+                max_iter=1000
+            )
+            
+            lr.fit(X_train_scaled, y_train)
+            y_pred_val = lr.predict(X_val_scaled)
+         
+            accuracy_scores.append(accuracy_score(y_val, y_pred_val))
+            f1_scores.append(f1_score(y_val, y_pred_val))
+      
+        cv_accuracy_mean = np.mean(accuracy_scores)
+        cv_accuracy_std = np.std(accuracy_scores)
+        cv_f1_mean = np.mean(f1_scores)
 
+        sem_accuracy = cv_accuracy_std / np.sqrt(K)
+        margin_of_error = t_critical * sem_accuracy
+        ci_lower = cv_accuracy_mean - margin_of_error
+        ci_upper = cv_accuracy_mean + margin_of_error
+
+        # --- Store Results ---
         results.append({
             'Penalty': name,
-            'Accuracy': f"{accuracy:.4f}",
-            'CI_Lower': f"{ci_lower:.4f}",
-            'CI_Upper': f"{ci_upper:.4f}",
-            'f1_scores': f"{f1:.4f}"
+            'CV_Mean_Accuracy': f"{cv_accuracy_mean:.4f}",
+            'CV_Mean_f1': f"{cv_f1_mean:.4f}",
+            'CI_Lower_95': f"{ci_lower:.4f}",
+            'CI_Upper_95': f"{ci_upper:.4f}"
         })
 
     return results
+
 
 if __name__ == "__main__": 
     dataframes = extract_data("../data/visits.tar.xz")
@@ -181,17 +225,10 @@ if __name__ == "__main__":
 
     plot_disease_progression(target_df)
 
-    data_train_scaled, data_test_scaled, y_train, y_test = prepare_data(target_df)
-    accuracy, lwr, hi, f1 = logisitic_regression_without_penalty(data_train_scaled, data_test_scaled, y_train, y_test)
+    x,y = prepare_data(target_df)
 
-    print("\n--- Summary Table (without penalty) ---")
-    print(f"Accuracy: {accuracy:.4f}")
-    print(f"95% CI: {lwr:.4f} - {hi:.4f}")
-    print(f"F1-Score: {f1:.2f}")
+    results = logisitic_regression_without_penalty(x, y, rng)
+    print(results)
 
-
-    results_with_penalty = logisitic_regression_with_penallty(data_train_scaled, data_test_scaled, y_train, y_test)
-
-    print("\n--- Summary Table (with penalty) ---")
-    for r in results_with_penalty:
-        print(f"| {r['Penalty']:<15} | Acc: {r['Accuracy']} | 95% CI: {r['CI_Lower']} - {r['CI_Upper']} | f1_score: {r['f1_scores']}")
+    results_with_penalty = logisitic_regression_with_penalty(x,y, rng)
+    print(results_with_penalty)
