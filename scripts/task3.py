@@ -3,11 +3,13 @@ import pandas as pd
 import os 
 import numpy as np 
 import lzma
-from sklearn import preprocessing, pipeline
+import matplotlib.pyplot as plt 
+from sklearn import preprocessing, pipeline, model_selection
 from sklearn.compose import ColumnTransformer
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier 
-from sklearn import model_selection
+from sklearn.metrics import precision_recall_curve, average_precision_score, PrecisionRecallDisplay
+
 
 #directory initialization 
 results_dir = "../results"
@@ -40,7 +42,7 @@ def merge_data(appointments_df, participants_df):
     return filtered_df
 
 def data_process_pipeline(filtered_df): 
-    filtered_df["status"] = filtered_df["status"].replace({"fullfilled":1, "no-show":0})
+    filtered_df["status"] = filtered_df["status"].replace({"fullfilled":0, "no-show":1})
     categorical_features = ['sms_received', 'weekday', 'sex', 'hipertension', 'diabetes', 'alcoholism']
     numerical_features = ['advance', 'day', 'month', 'age', 'count']
 
@@ -67,7 +69,7 @@ def data_process_pipeline(filtered_df):
     # df_transformed_scaled = pd.DataFrame(df_transformed_array, columns=all_feature_names)
     # df_transformed_scaled["status"] = filtered_df["status"].reset_index(drop=True)
 
-    return preprocessing_pipeline, filtered_df
+    return preprocessing_pipeline, filtered_df, categorical_features, numerical_features
 
 def initialize_constants(df_transformed_scaled):
     rng = np.random.RandomState(31)
@@ -238,13 +240,103 @@ def best_hyperparam_run(rng, cv, x, y, preprocessor):
     results_df = pd.DataFrame(results)
     return results_df
 
+def plot_pr_curves_cross_val(rng, cv, x, y, preprocessor):
+    
+    models_to_test = {
+        "Random Forest": RandomForestClassifier(
+            n_estimators=100, max_depth=4, random_state=rng, criterion="gini", max_features=4
+        ),
+        "Gradient Boosting": GradientBoostingClassifier(
+            n_estimators=100, learning_rate=0.5, max_depth=4, random_state=rng
+        ),
+        "K-Nearest Neighbors": KNeighborsClassifier(n_neighbors=5)
+    }
 
+    plt.figure(figsize=(10, 8))
+    
+    print("\n--- Generating PR Curves (this may take a moment) ---")
+    
+    for name, classifier in models_to_test.items():
+        full_pipeline = pipeline.Pipeline(steps=[
+            ('preprocessor', preprocessor),
+            ('classifier', classifier)
+        ])
+        
+        y_probas = model_selection.cross_val_predict(full_pipeline, x, y, cv=cv, method='predict_proba', n_jobs=-1)
+        y_scores = y_probas[:, 1]
+        precision, recall, _ = precision_recall_curve(y, y_scores)
+        ap_score = average_precision_score(y, y_scores)
+        plt.plot(recall, precision, lw=2, label=f'{name} (AP = {ap_score:.2f})')
+
+    
+    plt.xlabel("Recall")
+    plt.ylabel("Precision")
+    plt.title("Precision-Recall Curve (10-Fold Cross-Validation)")
+    plt.legend(loc="best")
+    plt.grid(alpha=0.3)
+    
+    
+    plot_path = os.path.join(results_dir, "pr_curve_comparison.png")
+    plt.savefig(plot_path)
+    print(f"PR Curve plot saved to: {plot_path}")
+
+def plot_feature_impact(df, preprocessor, cat_cols, num_cols):
+    
+    y = df["status"]
+    X_raw = df.drop(columns=["status"])
+    
+    # Fit the pipeline
+    X_processed = preprocessor.fit_transform(X_raw)
+    
+    # --- FIX FOR ATTRIBUTE ERROR ---
+    # Extract the ColumnTransformer from the Pipeline if necessary
+    if hasattr(preprocessor, 'named_steps'):
+        # Access the step named 'preprocessor'
+        transformer_step = preprocessor.named_steps['preprocessor']
+    else:
+        # It is already the transformer
+        transformer_step = preprocessor
+        
+    # Now access named_transformers_ on the correct object
+    cat_names = transformer_step.named_transformers_['cat'].get_feature_names_out(cat_cols)
+    feature_names = list(cat_names) + num_cols
+    # -------------------------------
+    
+    # Train Best Model
+    clf = GradientBoostingClassifier(n_estimators=100, learning_rate=0.5, max_depth=4, random_state=31)
+    clf.fit(X_processed, y)
+    
+    # Calculate Impact & Direction
+    importances = clf.feature_importances_
+    X_dense = X_processed.toarray() if hasattr(X_processed, "toarray") else X_processed
+    correlations = [np.corrcoef(X_dense[:, i], y)[0, 1] for i in range(X_dense.shape[1])]
+    
+    impact_df = pd.DataFrame({
+        'Feature': feature_names,
+        'Importance': importances,
+        'Correlation': correlations
+    })
+    
+    # Filter: Only keep features that DRIVE No-Shows (Positive Correlation)
+    impact_df = impact_df[impact_df['Correlation'] > 0].sort_values(by='Importance', ascending=True)
+    
+    plt.figure(figsize=(10, 8))
+    plt.barh(impact_df['Feature'], impact_df['Importance'])
+    
+    plt.title("Top Risk Factors for No-Shows (Positive Drivers Only)", fontsize=14)
+    plt.xlabel("Feature Importance (Gini)", fontsize=12)
+    plt.grid(axis='x', linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    plot_path = os.path.join(results_dir, "feature_impact_noshow_only.png")
+    plt.savefig(plot_path)
+    print(f"Plot saved to: {plot_path}")
 if __name__ == "__main__": 
     appointments_df, participants_df = load_data(filepath, output_dir)
     combined_df = merge_data(appointments_df, participants_df)
     
     # Get the preprocessor definition and the raw DataFrame
-    preprocessor, combined_df_processed = data_process_pipeline(combined_df) 
+    preprocessor, combined_df_processed, cat_cols, num_cols = data_process_pipeline(combined_df) 
     rng, cv, x, y = initialize_constants(combined_df_processed)
 
     # Note: You now pass the preprocessor to the grid search functions
@@ -256,3 +348,6 @@ if __name__ == "__main__":
 
     pd.set_option('display.float_format', lambda x: '%.4f' % x)
     print(results_df.sort_values(by="Mean F1 Score", ascending=False).to_markdown(index=False))
+
+    plot_pr_curves_cross_val(rng, cv, x, y, preprocessor)
+    plot_feature_impact(combined_df_processed, preprocessor, cat_cols, num_cols)
