@@ -7,8 +7,9 @@ import matplotlib.pyplot as plt
 from sklearn import preprocessing, pipeline, model_selection
 from sklearn.compose import ColumnTransformer
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier 
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier, StackingClassifier
 from sklearn.metrics import precision_recall_curve, average_precision_score, PrecisionRecallDisplay
+from sklearn.linear_model import LogisticRegression
 
 
 #directory initialization 
@@ -287,20 +288,10 @@ def plot_feature_impact(df, preprocessor, cat_cols, num_cols):
     
     # Fit the pipeline
     X_processed = preprocessor.fit_transform(X_raw)
-    
-    # --- FIX FOR ATTRIBUTE ERROR ---
-    # Extract the ColumnTransformer from the Pipeline if necessary
-    if hasattr(preprocessor, 'named_steps'):
-        # Access the step named 'preprocessor'
-        transformer_step = preprocessor.named_steps['preprocessor']
-    else:
-        # It is already the transformer
-        transformer_step = preprocessor
         
     # Now access named_transformers_ on the correct object
-    cat_names = transformer_step.named_transformers_['cat'].get_feature_names_out(cat_cols)
+    cat_names = preprocessor.named_steps['preprocessor'].named_transformers_['cat'].get_feature_names_out(cat_cols)
     feature_names = list(cat_names) + num_cols
-    # -------------------------------
     
     # Train Best Model
     clf = GradientBoostingClassifier(n_estimators=100, learning_rate=0.5, max_depth=4, random_state=31)
@@ -331,6 +322,69 @@ def plot_feature_impact(df, preprocessor, cat_cols, num_cols):
     plot_path = os.path.join(results_dir, "feature_impact_noshow_only.png")
     plt.savefig(plot_path)
     print(f"Plot saved to: {plot_path}")
+
+def run_ensemble_improvements(rng, cv, x, y, preprocessor):
+    
+    rf = RandomForestClassifier(n_estimators=100, max_depth=4, random_state=rng, criterion="gini")
+    gb = GradientBoostingClassifier(n_estimators=100, learning_rate=0.5, max_depth=4, random_state=rng)
+    
+
+    # Check Correlation first 
+    print("--- Step 1: Checking Model Correlation ---")
+    
+    pipe_rf = pipeline.Pipeline([('prep', preprocessor), ('clf', rf)])
+    pipe_gb = pipeline.Pipeline([('prep', preprocessor), ('clf', gb)])
+    
+    # Get out-of-fold probability predictions
+    print("Generating predictions to check correlation (this takes a moment)...")
+    pred_rf = model_selection.cross_val_predict(pipe_rf, x, y, cv=5, method='predict_proba')[:, 1]
+    pred_gb = model_selection.cross_val_predict(pipe_gb, x, y, cv=5, method='predict_proba')[:, 1]
+    
+    correlation = np.corrcoef(pred_rf, pred_gb)[0, 1]
+    print(f"Correlation between RF and GB predictions: {correlation:.4f}")
+    if correlation > 0.90:
+        print(">> WARNING: High correlation. Ensembling might have diminishing returns.")
+    else:
+        print(">> Good diversity. Ensembling should help.")
+
+
+    voting_clf = VotingClassifier(
+        estimators=[('rf', rf), ('gb', gb)],
+        voting='soft',
+        weights=[1, 2] 
+    )
+    
+    stacking_clf = StackingClassifier(
+        estimators=[('rf', rf), ('gb', gb)],
+        final_estimator=LogisticRegression(),
+        passthrough=True,
+        cv=5
+    )
+
+    models = {
+        "Standalone GB (Baseline)": gb,
+        "Weighted Soft Voting": voting_clf,
+        "Stacking (Passthrough)": stacking_clf
+    }
+    results = []
+    print("\n--- Step 2: Evaluating Models (10-Fold CV) ---")
+
+    for name, model in models.items():
+        full_pipeline = pipeline.Pipeline([('prep', preprocessor), ('clf', model)])
+        scores = model_selection.cross_validate(full_pipeline, x, y, cv=cv, 
+                                scoring=['average_precision', 'roc_auc', 'f1'], 
+                                n_jobs=-1)
+        
+        results.append({
+            "Model": name,
+            "Avg Precision (AP)": scores['test_average_precision'].mean(),
+            "ROC AUC": scores['test_roc_auc'].mean(),
+            "F1 Score": scores['test_f1'].mean()
+        })
+        print(f"Finished evaluating: {name}")
+
+    return pd.DataFrame(results)
+    
 if __name__ == "__main__": 
     appointments_df, participants_df = load_data(filepath, output_dir)
     combined_df = merge_data(appointments_df, participants_df)
@@ -351,3 +405,8 @@ if __name__ == "__main__":
 
     plot_pr_curves_cross_val(rng, cv, x, y, preprocessor)
     plot_feature_impact(combined_df_processed, preprocessor, cat_cols, num_cols)
+
+    results_df_ensemble = run_ensemble_improvements(rng, cv, x, y, preprocessor)
+    
+    print("\n--- Final Results ---")
+    print(results_df_ensemble.sort_values(by="Avg Precision (AP)", ascending=False).to_markdown(index=False))
