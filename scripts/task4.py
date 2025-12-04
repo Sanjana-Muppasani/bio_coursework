@@ -4,12 +4,13 @@ import keras
 import tarfile
 import os
 import lzma
+import matplotlib.pyplot as plt
+import keras_tuner as kt
 from sklearn.preprocessing import LabelEncoder
 from keras.models import Sequential
-from keras.layers import Embedding, Conv1D, MaxPooling1D, Dense, Dropout, Flatten
+from keras.layers import Embedding, Conv1D, MaxPooling1D, Dense, Dropout, Flatten, Bidirectional, LSTM, GRU, SimpleRNN
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from scikeras.wrappers import KerasClassifier
-import matplotlib.pyplot as plt
 from keras.backend import clear_session
 from sklearn.metrics import f1_score
 from scipy import stats
@@ -107,150 +108,441 @@ def vectorize_sequences_encode_labels(final_data, max_len):
     y = le.fit_transform(final_data.superfamily_id)
     return x , y 
 
-def cnn_build_evaluate(x, y):
+def cnn_tuning(TOKENS, DIMENSIONS, CLASSES, SIZE, x_numpy,y_numpy): 
 
-    rng = np.random.RandomState(42)
-
-    x_numpy = x.numpy() if hasattr(x, 'numpy') else np.array(x)
-    y_numpy = y.numpy() if hasattr(y, 'numpy') else np.array(y)
-    y_numpy = y_numpy.astype(int)
-
-    x_train_cv, x_test, y_train_cv, y_test = train_test_split(
-        x_numpy, y_numpy, test_size=0.2, stratify=y_numpy, random_state=rng
+    # 0. DATA SPLIT (Matches your example)
+    x_train, x_val, y_train, y_val = train_test_split(
+        x_numpy, y_numpy, test_size=0.2, stratify=y, random_state=rng
     )
 
-    print(f"Data Split: {len(x_train_cv)} training/validation samples, {len(x_test)} hold-out test samples.")
+    # --- 1. DEFINE CNN MODEL ---
+    def build_cnn(hp):
+        # Tunable parameters
+        units = hp.Int('units', min_value=32, max_value=128, step=32)
+        dropout = hp.Choice('dropout', values=[0.2, 0.5])
+        lr = hp.Choice('learning_rate', values=[1e-2, 1e-3])
 
-    TOKENS = 24
-    CLASSES = 5
-    DIMENSIONS = 16
-    UNITS = 32
-    SIZE = 4
-    DROPOUT_RATE = 0.2
-
-    def build_cnn():
         model = keras.Sequential([
             keras.Input(shape=(max_len,)),
-            Embedding(TOKENS, DIMENSIONS, mask_zero=False),
+            Embedding(TOKENS, DIMENSIONS, mask_zero=False), # mask_zero=False is better for CNNs
 
-            Conv1D(UNITS, SIZE, activation="relu"),
-            MaxPooling1D(SIZE),
-            Dropout(DROPOUT_RATE),
-
-            # Conv1D(UNITS, SIZE, activation="relu"),
-            # MaxPooling1D(SIZE),
-            # Dropout(DROPOUT_RATE),
-
+            # CNN Layer: Uses tuned 'units' for filters
+            # We use padding='same' to ensure Flatten works safely
+            Conv1D(filters=units, kernel_size=SIZE, activation="relu", padding='same'),
+            MaxPooling1D(pool_size=SIZE),
+            
             Flatten(),
-            Dense(UNITS, activation="relu"),
+
+            Dense(units, activation="relu"),
+            Dropout(dropout),
+
             Dense(CLASSES, activation="softmax")
         ])
 
-        model.compile(loss="sparse_categorical_crossentropy", optimizer="Adam", metrics=["accuracy"])
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=lr),
+            loss="sparse_categorical_crossentropy",
+            metrics=["accuracy"]
+        )
         return model
 
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=rng)
+    # --- 2. SETUP THE TUNER ---
+    cnn_tuner = kt.RandomSearch(
+        build_cnn,
+        objective='val_accuracy',
+        max_trials=5,
+        executions_per_trial=1,
+        directory='my_dir',
+        project_name='cnn_tuning_v1', # Unique name
+        overwrite=True                # CRITICAL: Deletes old logs to prevent errors
+    )
+
+    # --- 3. RUN SEARCH ---
+    print("Starting CNN Tuner Search...")
+    cnn_tuner.search(
+        x_train, y_train,
+        epochs=50,
+        validation_data=(x_val, y_val),
+        batch_size=32,
+        verbose=1
+    )
+
+    # --- 4. GET RESULTS ---
+    best_hps = cnn_tuner.get_best_hyperparameters(num_trials=1)[0]
+    return best_hps
+
+def lstm_tuning(TOKENS, DIMENSIONS, CLASSES, x_numpy,y_numpy): 
+
+    x_train, x_val, y_train, y_val = train_test_split(x_numpy, y_numpy, test_size=0.2, stratify=y, random_state=rng)
+    # --- 1. DEFINE MODEL WITH HYPERPARAMETERS ---
+    def build_model(hp):
+        units = hp.Int('units', min_value=32, max_value=128, step=32)
+        dropout = hp.Choice('dropout', values=[0.2, 0.5])
+        lr = hp.Choice('learning_rate', values=[1e-2, 1e-3])
+
+        model = keras.Sequential([
+            keras.Input(shape=(max_len,)),
+            Embedding(TOKENS, DIMENSIONS, mask_zero=True),
+            
+            Bidirectional(LSTM(units)),
+            
+            Dense(units, activation="relu"),
+            Dropout(dropout),
+            
+            Dense(CLASSES, activation="softmax")
+        ])
+
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=lr),
+            loss="sparse_categorical_crossentropy",
+            metrics=["accuracy"]
+        )
+        return model
+
+    tuner = kt.RandomSearch(
+        build_model,
+        objective='val_accuracy',
+        max_trials=5, 
+        executions_per_trial=1,
+        directory='my_dir',
+        project_name='cath_tuning'
+    )
+
+    print("Starting Keras Tuner Search...")
+
+    tuner.search(
+        x_train, y_train,             
+        validation_data=(x_val, y_val), 
+        verbose=1
+    )
+
+    best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
+
+    print(f"""
+    The hyperparameter search is complete. 
+    Best units: {best_hps.get('units')}
+    Best learning rate: {best_hps.get('learning_rate')}
+    Best dropout: {best_hps.get('dropout')}
+    """)
+
+    return best_hps
+
+def gru_tuning(TOKENS, CLASSES, x_numpy ,y_numpy):
+    
+# --- CONFIGURATION ---
+    EPOCHS_TUNING = 50
+    MAX_TRIALS = 5 
+
+    x_tune_train, x_tune_val, y_tune_train, y_tune_val = train_test_split(
+        x_numpy, y_numpy, test_size=0.2, stratify=y, random_state=rng
+    )
+
+    # --- 2. DEFINE THE HYPERMODEL (GRU + RNN) ---
+    def build_gru_rnn(hp):
+        # --- Tunable Hyperparameters ---
+        
+        # 1. NEW: Tune Embedding Dimensions
+        # We try 8, 16, 32, and 64 to see how "wide" the vector needs to be.
+        embed_dim = hp.Choice('embedding_dim', values=[8, 16, 32, 64])
+
+        # 2. Tune Units (GRU)
+        units = hp.Int('units', min_value=32, max_value=128, step=32)
+        
+        # 3. Tune Dropout
+        dropout = hp.Choice('dropout', values=[0.2, 0.5])
+        
+        # 4. Tune Learning Rate
+        lr = hp.Choice('learning_rate', values=[1e-2, 1e-3, 1e-4])
+
+        model = keras.Sequential([
+            keras.Input(shape=(max_len,)),
+            
+            # Pass the tuned 'embed_dim' here instead of a fixed constant
+            Embedding(input_dim=TOKENS, output_dim=embed_dim, mask_zero=True),
+
+            # Layer 1: GRU
+            GRU(units, return_sequences=True),
+            
+            # Layer 2: SimpleRNN (Half the size of the GRU)
+            SimpleRNN(units // 2),
+
+            Dense(units, activation="relu"),
+            Dropout(dropout),
+
+            Dense(CLASSES, activation="softmax")
+        ])
+
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=lr),
+            loss="sparse_categorical_crossentropy",
+            metrics=["accuracy"]
+        )
+        return model
+
+    # --- 3. PHASE 1: HYPERPARAMETER TUNING ---
+    print(f"--- Phase 1: Tuning Hyperparameters (Max Trials: {MAX_TRIALS}) ---")
+
+    tuner = kt.RandomSearch(
+        build_gru_rnn,
+        objective='val_accuracy',
+        max_trials=MAX_TRIALS,
+        executions_per_trial=1,
+        directory='my_dir',
+        project_name='gru_rnn_tuning_v2', # Changed name to avoid conflict with previous runs
+        overwrite=True
+    )
+
+    # Run the search
+    tuner.search(
+        x_tune_train, y_tune_train,
+        epochs=EPOCHS_TUNING,
+        validation_data=(x_tune_val, y_tune_val),
+        verbose=1
+    )
+
+    # Get the best hyperparameters
+    best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
+    return best_hps
+
+def best_cnn_nestedcv_earlystopping(x_numpy, y_numpy, early_stopping = "yes"): 
+    
+    NUM_OUTER_FOLDS = 5
+    MAX_TRIALS = 5  
+    EPOCHS = 50
+    BATCH_SIZE = 32
+
+    # TOGGLE EARLY STOPPING HERE ('yes' or 'no')
+    USE_EARLY_STOPPING = early_stopping 
+
+    # --- HELPER FUNCTION FOR CONFIDENCE INTERVALS ---
+    def compute_95_ci(data):
+        """Calculates Mean and 95% Confidence Interval margin."""
+        data = np.array(data)
+        n = len(data)
+        mean = np.mean(data)
+        se = stats.sem(data)
+        h = se * stats.t.ppf((1 + 0.95) / 2., n-1)
+        return mean, h
+
+    def build_cnn(hp):
+        model = keras.Sequential()
+        model.add(keras.Input(shape=(max_len,)))
+        model.add(Embedding(TOKENS, DIMENSIONS, mask_zero=False))
+
+        hp_units = hp.Int('units', min_value=32, max_value=128, step=32)
+        model.add(Conv1D(filters=hp_units, kernel_size=SIZE, activation="relu", padding='same'))
+        model.add(MaxPooling1D(pool_size=SIZE))
+        
+        model.add(Flatten())
+        model.add(Dense(hp_units, activation="relu"))
+        
+        hp_dropout = hp.Choice('dropout', values=[0.2, 0.5])
+        model.add(Dropout(hp_dropout))
+
+        model.add(Dense(CLASSES, activation="softmax"))
+
+        hp_lr = hp.Choice('learning_rate', values=[1e-2, 1e-3])
+
+        model.compile(
+            optimizer=keras.optimizers.Adam(learning_rate=hp_lr),
+            loss="sparse_categorical_crossentropy",
+            metrics=["accuracy"]
+        )
+        return model
+
+    # --- STORAGE FOR RESULTS ---
+    outer_acc = []
+    outer_f1 = []
+    outer_loss = []
+    history_list = []
 
     fold_no = 1
+    skf = StratifiedKFold(n_splits=NUM_OUTER_FOLDS, shuffle=True, random_state=rng)
 
-    f1_per_fold = [] 
-    loss_per_fold = []
+    print(f"Starting {NUM_OUTER_FOLDS}-Fold Nested Cross-Validation...")
+    print(f"Early Stopping Enabled: {USE_EARLY_STOPPING}")
 
-    all_train_acc = []
-    all_val_acc = []
-    all_train_loss = []
-    all_val_loss = []
+    # --- OUTER LOOP ---
+    for train_index, test_index in skf.split(x_numpy, y_numpy):
+        print(f"\n--- Processing Outer Fold {fold_no}/{NUM_OUTER_FOLDS} ---")
+        
+        x_outer_train, x_outer_test = x_numpy[train_index], x_numpy[test_index]
+        y_outer_train, y_outer_test = y_numpy[train_index], y_numpy[test_index]
+        
+        # Inner Split (for Tuner)
+        x_inner_train, x_inner_val, y_inner_train, y_inner_val = train_test_split(
+            x_outer_train, y_outer_train, test_size=0.2, stratify=y_outer_train, random_state=rng
+        )
 
-    print(f"\nStarting 5-Fold Stratified Cross-Validation on TRAINING set...")
+        tuner = kt.RandomSearch(
+            build_cnn,
+            objective='val_accuracy',
+            max_trials=MAX_TRIALS,
+            executions_per_trial=1,
+            directory='nested_cv_results',
+            project_name=f'tuning_fold_{fold_no}', 
+            overwrite=True
+        )
 
-    for train_index, val_index in skf.split(x_train_cv, y_train_cv):
-        # Important: Clear Keras session to prevent state leakage (Feedback: "starting from scratch")
-        clear_session()
-        
-        x_train_fold, x_val_fold = x_train_cv[train_index], x_train_cv[val_index]
-        y_train_fold, y_val_fold = y_train_cv[train_index], y_train_cv[val_index]
-        
-        model = build_cnn()
-        
-        print(f"Training for Fold {fold_no} ...")
-        
-        history = model.fit(
-            x_train_fold, y_train_fold,
-            epochs=50,
-            batch_size=32,
-            validation_data=(x_val_fold, y_val_fold),
+        # Search (Inner Loop)
+        tuner.search(
+            x_inner_train, y_inner_train,
+            epochs=EPOCHS,
+            validation_data=(x_inner_val, y_inner_val),
+            # You can keep early stopping in the tuner to speed up search, 
+            # regardless of the outer loop setting.
+            callbacks=[keras.callbacks.EarlyStopping(patience=5, restore_best_weights=True)],
             verbose=0 
         )
         
-        y_pred_probs = model.predict(x_val_fold, verbose=0)
+        best_hps = tuner.get_best_hyperparameters(num_trials=1)[0]
+        best_model = tuner.hypermodel.build(best_hps)
+
+        # --- CONDITIONAL EARLY STOPPING LOGIC ---
+        final_callbacks = [] # Default is empty list
+        
+        if USE_EARLY_STOPPING.lower() == 'yes':
+            print(" > Early Stopping Active for this fold.")
+            final_callbacks = [
+                keras.callbacks.EarlyStopping(
+                    monitor='val_loss',  # Recommended: monitor accuracy to keep scores high
+                    patience=12,             # Generous patience
+                    restore_best_weights=True
+                )
+            ]
+        
+        # Refit Best Model
+        history = best_model.fit(
+            x_outer_train, y_outer_train,
+            validation_data=(x_outer_test, y_outer_test), 
+            epochs=EPOCHS,
+            batch_size=BATCH_SIZE,
+            verbose=0,
+            callbacks=final_callbacks # Pass the conditional list here
+        )
+        
+        history_list.append(history.history)
+
+        # Evaluation
+        eval_results = best_model.evaluate(x_outer_test, y_outer_test, verbose=0)
+        fold_loss = eval_results[0]
+        fold_acc = eval_results[1]
+        
+        y_pred_probs = best_model.predict(x_outer_test, verbose=0)
         y_pred_classes = np.argmax(y_pred_probs, axis=1)
+        fold_f1 = f1_score(y_outer_test, y_pred_classes, average='macro')
         
-
-        fold_f1 = f1_score(y_val_fold, y_pred_classes, average='macro')
+        print(f"  > Fold {fold_no} Results -> Loss: {fold_loss:.4f} | Acc: {fold_acc:.4f} | F1: {fold_f1:.4f}")
         
-
-        scores = model.evaluate(x_val_fold, y_val_fold, verbose=0)
+        outer_loss.append(fold_loss)
+        outer_acc.append(fold_acc)
+        outer_f1.append(fold_f1)
         
-        print(f"Fold {fold_no}: Loss {scores[0]:.4f}; Macro F1 {fold_f1:.4f}")
-        
-        f1_per_fold.append(fold_f1)
-        loss_per_fold.append(scores[0])
-        
-        all_train_acc.append(history.history['accuracy'])
-        all_val_acc.append(history.history['val_accuracy'])
-        all_train_loss.append(history.history['loss'])
-        all_val_loss.append(history.history['val_loss'])
-        
+        clear_session()
         fold_no += 1
 
-    mean_f1 = np.mean(f1_per_fold)
-    std_error = stats.sem(f1_per_fold)
-    ci = std_error * stats.t.ppf((1 + 0.95) / 2., len(f1_per_fold)-1)
+    # --- FINAL STATISTICS ---
+    mean_acc, ci_acc = compute_95_ci(outer_acc)
+    mean_f1, ci_f1 = compute_95_ci(outer_f1)
+    mean_loss, ci_loss = compute_95_ci(outer_loss)
 
-    print("\n------------------------------------------------------------------------")
-    print("Cross-Validation Results (Macro F1):")
-    print(f"> Mean F1: {mean_f1:.4f}")
-    print(f"> 95% Confidence Interval: +/- {ci:.4f} ({mean_f1 - ci:.4f} - {mean_f1 + ci:.4f})")
-    print("------------------------------------------------------------------------")
+    return mean_acc, ci_acc, mean_f1, ci_f1, mean_loss, ci_loss, history_list
 
+def plot_early_stopping_history(history_list, max_epochs=50):
+    acc_matrix = np.full((len(history_list), max_epochs), np.nan)
+    val_acc_matrix = np.full((len(history_list), max_epochs), np.nan)
+    loss_matrix = np.full((len(history_list), max_epochs), np.nan)
+    val_loss_matrix = np.full((len(history_list), max_epochs), np.nan)
 
-    print("\nRetraining on full CV data and evaluating on Hold-out Test Set...")
-    clear_session()
-    final_model = build_cnn()
-    final_model.fit(x_train_cv, y_train_cv, epochs=50, batch_size=32, verbose=0)
+    for i, h in enumerate(history_list):
+        num_epochs = len(h['accuracy'])
+        
+        # 1. Fill the actual data
+        acc_matrix[i, :num_epochs] = h['accuracy']
+        val_acc_matrix[i, :num_epochs] = h['val_accuracy']
+        loss_matrix[i, :num_epochs] = h['loss']
+        val_loss_matrix[i, :num_epochs] = h['val_loss']
+        
+        # 2. Pad the rest with the FINAL value (Horizontal Line effect)
+        # This represents "if we kept the model frozen, how would it look?"
+        acc_matrix[i, num_epochs:] = h['accuracy'][-1]
+        val_acc_matrix[i, num_epochs:] = h['val_accuracy'][-1]
+        loss_matrix[i, num_epochs:] = h['loss'][-1]
+        val_loss_matrix[i, num_epochs:] = h['val_loss'][-1]
 
-    test_pred_probs = final_model.predict(x_test, verbose=0)
-    test_pred_classes = np.argmax(test_pred_probs, axis=1)
-    test_f1 = f1_score(y_test, test_pred_classes, average='macro')
+    # Calculate Mean across folds
+    mean_acc = np.nanmean(acc_matrix, axis=0)
+    mean_val_acc = np.nanmean(val_acc_matrix, axis=0)
+    mean_loss = np.nanmean(loss_matrix, axis=0)
+    mean_val_loss = np.nanmean(val_loss_matrix, axis=0)
 
-    print(f"Final Hold-out Test Set Macro F1: {test_f1:.4f}")
+    epochs_range = range(1, max_epochs + 1)
 
-    # --- Plotting (Averaged over folds) ---
-    avg_train_acc = np.mean(all_train_acc, axis=0)
-    avg_val_acc = np.mean(all_val_acc, axis=0)
-    avg_train_loss = np.mean(all_train_loss, axis=0)
-    avg_val_loss = np.mean(all_val_loss, axis=0)
-    epochs_range = range(1, len(avg_train_acc) + 1)
-
+    # --- PLOTTING ---
     plt.figure(figsize=(14, 5))
-    plt.subplot(1, 2, 1)
-    plt.plot(epochs_range, avg_train_acc, label='Training Acc')
-    plt.plot(epochs_range, avg_val_acc, label='Validation Acc')
-    plt.title('Average Accuracy ')
-    plt.legend()
-    plt.grid(True)
 
-    plt.subplot(1, 2, 2)
-    plt.plot(epochs_range, avg_train_loss, label='Training Loss')
-    plt.plot(epochs_range, avg_val_loss, label='Validation Loss')
-    plt.title('Average Loss')
+    # ACCURACY
+    plt.subplot(1, 2, 1)
+    # Plot individual folds faintly to show variance
+    for i in range(len(history_list)):
+        plt.plot(acc_matrix[i], color='blue', alpha=0.1)
+        plt.plot(val_acc_matrix[i], color='red', alpha=0.1)
+        
+    plt.plot(epochs_range, mean_acc, 'b-', linewidth=2, label='Training Acc (Avg)')
+    plt.plot(epochs_range, mean_val_acc, 'r--', linewidth=2, label='Validation Acc (Avg)')
+    plt.title('Average Accuracy (Early Stopping Padded)')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy')
     plt.legend()
-    plt.grid(True)
+    plt.grid(True, alpha=0.3)
+
+    # LOSS
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs_range, mean_loss, 'b-', linewidth=2, label='Training Loss (Avg)')
+    plt.plot(epochs_range, mean_val_loss, 'r--', linewidth=2, label='Validation Loss (Avg)')
+    plt.title('Average Loss (Early Stopping Padded)')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    plt.tight_layout()
     plt.show()
 
-    plot_path = os.path.join("../results", "Accuracy over Epochs.png")
-    plt.savefig(plot_path)
-    print(f"PR Curve plot saved to: {plot_path}")
+def plot_cv_history(history_list): 
+    train_acc = np.mean([h['accuracy'] for h in history_list], axis=0)
+    val_acc   = np.mean([h['val_accuracy'] for h in history_list], axis=0)
+    train_loss = np.mean([h['loss'] for h in history_list], axis=0)
+    val_loss  = np.mean([h['val_loss'] for h in history_list], axis=0)
+    
+    epochs = range(1, len(train_acc) + 1)
+
+    # 2. Create Plot
+    plt.figure(figsize=(14, 5))
+
+    # --- Accuracy Subplot ---
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs, train_acc, 'b-', label='Training Acc (Avg)')
+    plt.plot(epochs, val_acc, 'r--', label='Validation/Test Acc (Avg)')
+    plt.title('Average Accuracy over 5 Folds')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    # --- Loss Subplot ---
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs, train_loss, 'b-', label='Training Loss (Avg)')
+    plt.plot(epochs, val_loss, 'r--', label='Validation/Test Loss (Avg)')
+    plt.title('Average Loss over 5 Folds')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
 
 if __name__ == "__main__": 
 
@@ -264,4 +556,57 @@ if __name__ == "__main__":
     df_merged = load_merge_data(filepath, FN_DOMAIN_LIST, FN_SF_NAMES, FN_SEQ_S60, output_dir)
     final_data, max_len = filter_df(df_merged)
     x , y = vectorize_sequences_encode_labels(final_data, max_len)
-    cnn_build_evaluate(x,y)
+
+    x_numpy = x.numpy() if hasattr(x, 'numpy') else np.array(x)
+    y_numpy = y.numpy() if hasattr(y, 'numpy') else np.array(y)
+    y_numpy = y_numpy.astype(int)
+    rng = np.random.RandomState(42)
+
+    TOKENS = 24
+    DIMENSIONS = 16
+    CLASSES = 5
+    SIZE = 4
+    UNITS = 128
+    #Metrics from best hyper parameters from CNN 
+    SIZE = 4
+    DROPOUT_RATE = 0.5
+    LEEARNING_RATE = 0.001
+
+    # Run only if needed, takes a lot of time (CNN - 15mins, LSTM-63mins, GRU-90mins)
+    # best_cnn_hps = cnn_tuning(TOKENS, DIMENSIONS, CLASSES, SIZE, x_numpy, y_numpy)
+    # print(f"""
+    # CNN Search Complete.
+    # Best units: {best_cnn_hps.get('units')}
+    # Best learning rate: {best_cnn_hps.get('learning_rate')}
+    # Best dropout: {best_cnn_hps.get('dropout')}
+    # """)
+
+    # best_LSTM_hps = lstm_tuning(TOKENS, DIMENSIONS, CLASSES, SIZE, x_numpy, y_numpy)
+    # print(f"""
+    # LSTM Search Complete.
+    # Best units: {best_LSTM_hps.get('units')}
+    # Best learning rate: {best_LSTM_hps.get('learning_rate')}
+    # Best dropout: {best_LSTM_hps.get('dropout')}
+    # """)
+
+    # best_GRU_hps = gru_tuning(TOKENS, DIMENSIONS, x_numpy, y_numpy)
+    # print(f"""
+    # GRU + RNN Search Complete.
+    # Best units: {best_GRU_hps.get('units')}
+    # Best learning rate: {best_GRU_hps.get('learning_rate')}
+    # Best dropout: {best_GRU_hps.get('dropout')}
+    # """)
+
+    mean_acc, ci_acc, mean_f1, ci_f1, mean_loss, ci_loss, history_list = best_cnn_nestedcv_earlystopping(x_numpy, y_numpy, early_stopping = "yes")
+    
+    print("\n============================================================")
+    print("FINAL NESTED CV RESULTS")
+    print("============================================================")
+    print(f"Accuracy:  {mean_acc:.4f}  (+/- {ci_acc:.4f})")
+    print(f"Macro F1:  {mean_f1:.4f}  (+/- {ci_f1:.4f})")
+    print(f"Loss:      {mean_loss:.4f}  (+/- {ci_loss:.4f})")
+    print("============================================================")
+    print(f"Report format: {mean_f1*100:.2f}% ± {ci_f1*100:.2f}% (95% CI)")
+    print("============================================================")
+
+    plot_early_stopping_history(history_list)
