@@ -73,12 +73,8 @@ def custom_cnn():
     [
         keras.Input(shape=input_shape),
         layers.Conv2D(32, kernel_size=(3, 3), activation="relu"),
-        #layers.BatchNormalization(),
-        # layers.Dropout(0.4),
         layers.MaxPooling2D(pool_size=(2, 2)),
         layers.Conv2D(64, kernel_size=(3, 3), activation="relu"),
-        #layers.BatchNormalization(),
-        # layers.Dropout(0.4),
         layers.MaxPooling2D(pool_size=(2, 2)),
         layers.Flatten(),
         layers.Dense(128,activation="relu"),
@@ -128,9 +124,9 @@ def tune_cnn(train_ds, val_ds):
     tuner = kt.Hyperband(
         build_model,
         objective='val_accuracy',
-        max_epochs=15,             # Max epochs per trial
-        factor=3,                  # Reduction factor
-        directory='my_dir',        # Where to save results
+        max_epochs=15,             
+        factor=3,                  
+        directory='my_dir',        
         project_name='oct_tuning'
     )
 
@@ -154,7 +150,7 @@ def train_evaluate_cnn(model, train_ds, test_ds, val_ds):
     callbacks = [
         keras.callbacks.EarlyStopping(
             monitor="val_loss",
-            patience=5,             # Stop if no improvement for 5 epochs
+            patience=5,             
             restore_best_weights=True
         ),
         keras.callbacks.ModelCheckpoint(
@@ -164,8 +160,7 @@ def train_evaluate_cnn(model, train_ds, test_ds, val_ds):
         )
     ]
 
-    # Train the model
-    epochs = 30  # Set high, EarlyStopping will cut it short if needed
+    epochs = 30 
 
     history = model.fit(
         train_ds,
@@ -177,11 +172,9 @@ def train_evaluate_cnn(model, train_ds, test_ds, val_ds):
 
     test_loss, test_acc = model.evaluate(test_ds, verbose=0)
 
-    # 2. Make Predictions on the Test Set
     print("Generating predictions...")
     y_pred_probs = model.predict(test_ds)
 
-    # 3. Convert Probabilities to Class Integers (e.g., [0, 0, 1] -> 2)
     y_pred = np.argmax(y_pred_probs, axis=1)
 
     y_true = []
@@ -189,24 +182,20 @@ def train_evaluate_cnn(model, train_ds, test_ds, val_ds):
         y_true.append(np.argmax(labels.numpy(), axis=1))
     y_true = np.concatenate(y_true)
 
-    # 4. Calculate Macro F1 Score
     macro_f1 = f1_score(y_true, y_pred, average='macro')
 
-    # --- Final Output ---
     print("-" * 30)
     print(f"Test Loss:      {test_loss:.4f}")
     print(f"Test Accuracy:  {test_acc:.4f}")
     print(f"Macro F1 Score: {macro_f1:.4f}")
     print("-" * 30)
 
-    # Optional: Detailed Report
     print("\nDetailed Classification Report:\n")
     print(classification_report(y_true, y_pred, target_names=['CNV', 'DME', 'DRUSEN', 'NORMAL']))
 
     cm = confusion_matrix(y_true, y_pred)
 
     class_names = ['CNV', 'DME', 'DRUSEN', 'NORMAL']
-    # 5. Plot
     plt.figure(figsize=(10, 8))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=class_names,
@@ -214,7 +203,10 @@ def train_evaluate_cnn(model, train_ds, test_ds, val_ds):
     plt.xlabel('Predicted Label')
     plt.ylabel('True Label')
     plt.title('Confusion Matrix')
-    plt.savefig("../results/T5_CNN_CM.png", dpi=300)
+    
+    save_path_cm = os.path.join(results_dir, "T5_CNN_CM.png")
+    plt.savefig(save_path_cm, dpi=300, bbox_inches='tight')
+    print(f"Saved: {save_path_cm}")
 
     acc = history.history['accuracy']
     val_acc = history.history['val_accuracy']
@@ -230,26 +222,26 @@ def train_evaluate_cnn(model, train_ds, test_ds, val_ds):
     plt.legend(loc='lower right')
     plt.title('Training and Validation Accuracy')
 
-    # Plot Loss
     plt.subplot(1, 2, 2)
     plt.plot(epochs_range, loss, label='Training Loss')
     plt.plot(epochs_range, val_loss, label='Validation Loss')
     plt.legend(loc='upper right')
     plt.title('Training and Validation Loss')
-    plt.savefig("../results/T5_CNN_Learning_Curves.png", dpi=300)
+
+    save_path_lc = os.path.join(results_dir, "T5_CNN_Learning_Curves.png")
+    plt.savefig(save_path_lc, dpi=300, bbox_inches='tight')
+    print(f"Saved: {save_path_lc}")
 
 def train_tune_evaluate_tl(train_ds, test_ds, val_ds): 
     def build_transfer_model(input_shape, num_classes):
-    # Load MobileNetV2 without the top classification layer
-    # alpha=0.5 makes the model smaller/faster (optional, can be removed for higher accuracy)
+
         base_model = MobileNetV2(
             weights='imagenet',
             include_top=False,
             input_shape=input_shape,
-            alpha=1.0 # Changed to 1.0 for standard performance, use 0.5 for speed
+            alpha=1.0 
         )
 
-        # Freeze the base model initially
         base_model.trainable = False
 
         model = keras.Sequential([
@@ -261,14 +253,8 @@ def train_tune_evaluate_tl(train_ds, test_ds, val_ds):
         ])
 
         return model
-
-# # Initialize
-# input_shape = (IMG_SHAPE[0], IMG_SHAPE[1], 3)
-# num_classes = 4
-
     model = build_transfer_model(input_shape, num_classes)
 
-    # Compile
     model.compile(
         optimizer=Adam(learning_rate=0.0001),
         loss='categorical_crossentropy',
@@ -288,7 +274,6 @@ def train_tune_evaluate_tl(train_ds, test_ds, val_ds):
 
     base_model_layer = None
     for layer in model.layers:
-        # Check if the layer is a Model/Functional layer (like MobileNetV2)
         if hasattr(layer, 'layers') and len(layer.layers) > 0:
             base_model_layer = layer
             break
@@ -297,17 +282,11 @@ def train_tune_evaluate_tl(train_ds, test_ds, val_ds):
         print("Error: Could not find the base model! Check model.summary().")
     else:
         print(f"Base model found: {base_model_layer.name}")
-
-        # 2. Unfreeze the base model
         base_model_layer.trainable = True
-
-        # 3. Freeze all but the last 30 layers of the base model
         for layer in base_model_layer.layers[:-30]:
             layer.trainable = False
-
-        # 4. Recompile with LOW Learning Rate (Crucial!)
         model.compile(
-            optimizer=keras.optimizers.Adam(1e-5), # Very low LR to prevent destroying weights
+            optimizer=keras.optimizers.Adam(1e-5), 
             loss='categorical_crossentropy',
             metrics=['accuracy']
         )
@@ -323,12 +302,9 @@ def train_tune_evaluate_tl(train_ds, test_ds, val_ds):
     loss, acc = model.evaluate(test_ds)
     print(f"Test Accuracy: {acc:.4f}")
 
-    # Get predictions
     predictions = model.predict(test_ds)
     y_pred = np.argmax(predictions, axis=1)
 
-    # Get true labels
-    # Since we didn't shuffle test_ds, we can iterate to get labels
     y_true = np.concatenate([y for x, y in test_ds], axis=0)
     y_true = np.argmax(y_true, axis=1)
 
@@ -337,7 +313,7 @@ def train_tune_evaluate_tl(train_ds, test_ds, val_ds):
 
     cm = confusion_matrix(y_true, y_pred)
     class_names = ['CNV', 'DME', 'DRUSEN', 'NORMAL']
-    # 5. Plot
+
     plt.figure(figsize=(10, 8))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=class_names,
@@ -345,7 +321,7 @@ def train_tune_evaluate_tl(train_ds, test_ds, val_ds):
     plt.xlabel('Predicted Label')
     plt.ylabel('True Label')
     plt.title('Confusion Matrix')
-    plt.savefig("../results/T5_TL_CM.png", dpi=300)
+    plt.savefig(os.path.join(results_dir, "T5_TL_CM.png"), dpi=300, bbox_inches='tight')
 
     acc = history.history['accuracy']
     val_acc = history.history['val_accuracy']
@@ -356,20 +332,18 @@ def train_tune_evaluate_tl(train_ds, test_ds, val_ds):
 
     plt.figure(figsize=(12, 6))
 
-    # Plot Accuracy
     plt.subplot(1, 2, 1)
     plt.plot(epochs_range, acc, label='Training Accuracy')
     plt.plot(epochs_range, val_acc, label='Validation Accuracy')
     plt.legend(loc='lower right')
     plt.title('Training and Validation Accuracy')
 
-    # Plot Loss
     plt.subplot(1, 2, 2)
     plt.plot(epochs_range, loss, label='Training Loss')
     plt.plot(epochs_range, val_loss, label='Validation Loss')
     plt.legend(loc='upper right')
     plt.title('Training and Validation Loss')
-    plt.savefig("../results/T5_TL_Learning.png", dpi=300)
+    plt.savefig(os.path.join(results_dir, "T5_TL_Learning.png"), dpi=300, bbox_inches='tight')
 
     return model 
 
@@ -377,33 +351,26 @@ def shap_explain(model):
     for images, labels in test_ds.take(1):
         test_batch = images.numpy()
 
-    images_to_explain = test_batch[:5]  # Explain first 5 images
-
-    # 2. Define the Masker
-    # This tells SHAP: "When you want to hide a part of the image, use this method."
-    # "inpaint_telea" blurs the hidden parts. 
-    # We pass the shape of a SINGLE image (e.g., 150, 150, 3).
+    images_to_explain = test_batch[:5]  #
     masker = shap.maskers.Image("inpaint_telea", images_to_explain[0].shape)
-
-    # 3. Create the Explainer
-    # We pass the MODEL and the MASKER.
-    # This automatically selects 'PartitionExplainer', which is optimized for images.
     explainer = shap.Explainer(model, masker)
-
-    # 4. Calculate SHAP values
-    # This generates the explanation object.
     print("Calculating SHAP values...")
     shap_values = explainer(images_to_explain, max_evals=500, batch_size=50)
 
-    # 5. Visualize
-    # Note: The syntax for plotting this specific output is slightly different.
     shap.image_plot(shap_values, show=False)
-    plt.savefig('shap_explanation.png', bbox_inches="tight", dpi=300)
+    save_path = os.path.join(results_dir, 'shap_explanation.png')
+    plt.savefig(save_path, bbox_inches="tight", dpi=300)
+    print(f"Saved SHAP explanation to: {save_path}")
 
 if __name__ == "__main__": 
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    results_dir = os.path.join(script_dir, '..', 'results')
+    data_dir = os.path.join(script_dir, '..', 'data')
+    os.makedirs(results_dir, exist_ok=True)
+    print(f"Saving results to: {results_dir}")
 
-    extracted_data_dir = '../data/extracted_data'
-    zip_path = "../data/retinal-oct-sample.zip"
+    zip_path = os.path.join(data_dir, "retinal-oct-sample.zip")
+    extracted_data_dir = os.path.join(data_dir, 'extracted_data')
 
     batch_size = 128
     epochs = 15
@@ -411,7 +378,7 @@ if __name__ == "__main__":
     input_shape = (150, 150, 3)
 
     extract_zip(zip_path, extracted_data_dir)
-    train_ds, val_ds, test_ds = load_data(normalization="yes", preprocessing="no") #for custom CNN
+    train_ds, val_ds, test_ds = load_data(normalization="yes", preprocessing="no") 
     cnn_model = custom_cnn()
 
     # tune_cnn(train_ds, val_ds) #uncomment and run to find the best combination of hyper params 

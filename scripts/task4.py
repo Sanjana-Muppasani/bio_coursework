@@ -448,7 +448,7 @@ def best_cnn_nestedcv_earlystopping(x_numpy, y_numpy, early_stopping = "yes"):
 
     return mean_acc, ci_acc, mean_f1, ci_f1, mean_loss, ci_loss, history_list
 
-def plot_early_stopping_history(history_list, max_epochs=50):
+def plot_early_stopping_history(history_list, save_path=None, max_epochs=50):
     acc_matrix = np.full((len(history_list), max_epochs), np.nan)
     val_acc_matrix = np.full((len(history_list), max_epochs), np.nan)
     loss_matrix = np.full((len(history_list), max_epochs), np.nan)
@@ -507,9 +507,13 @@ def plot_early_stopping_history(history_list, max_epochs=50):
     plt.grid(True, alpha=0.3)
 
     plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Plot saved successfully to: {save_path}")
     plt.show()
+    plt.close()
 
-def plot_cv_history(history_list): 
+def plot_cv_history(history_list, save_path=None): 
     train_acc = np.mean([h['accuracy'] for h in history_list], axis=0)
     val_acc   = np.mean([h['val_accuracy'] for h in history_list], axis=0)
     train_loss = np.mean([h['loss'] for h in history_list], axis=0)
@@ -541,10 +545,20 @@ def plot_cv_history(history_list):
     plt.grid(True, alpha=0.3)
 
     plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Plot saved successfully to: {save_path}")
     plt.show()
+    plt.close()
 
 
 if __name__ == "__main__": 
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    results_dir = os.path.join(script_dir, '..', 'results')
+    os.makedirs(results_dir, exist_ok=True)
+    
+    print(f"Results will be saved to: {results_dir}")
 
     filepath = "../data/cath.tar.xz"
     output_dir = "../data/extracted_data/cath"
@@ -609,4 +623,42 @@ if __name__ == "__main__":
     print(f"Report format: {mean_f1*100:.2f}% ± {ci_f1*100:.2f}% (95% CI)")
     print("============================================================")
 
-    plot_early_stopping_history(history_list)
+    s60_plot_path = os.path.join(results_dir, "S60_CNN_EarlyStopping_History.png")
+    plot_early_stopping_history(history_list, save_path=s60_plot_path)
+
+    # #Uncomment to check for S40 sequence data @
+    # FN_SEQ_S40 = '../data/extracted_data/cath/proteins/seqs_nonredundant_S40.fa'
+
+    # df_merged = load_merge_data(filepath, FN_DOMAIN_LIST, FN_SF_NAMES, FN_SEQ_S40, output_dir)
+    # final_data, max_len = filter_df(df_merged)
+    # x , y = vectorize_sequences_encode_labels(final_data, max_len)
+
+    # x_numpy = x.numpy() if hasattr(x, 'numpy') else np.array(x)
+    # y_numpy = y.numpy() if hasattr(y, 'numpy') else np.array(y)
+    # y_numpy = y_numpy.astype(int)
+    # rng = np.random.RandomState(42)
+
+    # TOKENS = 24
+    # DIMENSIONS = 16
+    # CLASSES = 5
+    # SIZE = 4
+    # UNITS = 128
+    # #Metrics from best hyper parameters from CNN 
+    # SIZE = 4
+    # DROPOUT_RATE = 0.5
+    # LEEARNING_RATE = 0.001
+
+    # mean_acc, ci_acc, mean_f1, ci_f1, mean_loss, ci_loss, history_list = best_cnn_nestedcv_earlystopping(x_numpy, y_numpy, early_stopping = "yes")
+    
+    # print("\n============================================================")
+    # print("FINAL NESTED CV RESULTS")
+    # print("============================================================")
+    # print(f"Accuracy:  {mean_acc:.4f}  (+/- {ci_acc:.4f})")
+    # print(f"Macro F1:  {mean_f1:.4f}  (+/- {ci_f1:.4f})")
+    # print(f"Loss:      {mean_loss:.4f}  (+/- {ci_loss:.4f})")
+    # print("============================================================")
+    # print(f"Report format: {mean_f1*100:.2f}% ± {ci_f1*100:.2f}% (95% CI)")
+    # print("============================================================")
+    # s40_plot_path = os.path.join(results_dir, "S40_CNN_EarlyStopping_History.png")
+    # plot_early_stopping_history(history_list, save_path=s40_plot_path)
+    # plot_early_stopping_history(history_list)

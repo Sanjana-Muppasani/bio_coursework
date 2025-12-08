@@ -4,13 +4,14 @@ import os
 import numpy as np 
 import lzma
 import matplotlib.pyplot as plt 
+import seaborn as sns
 from sklearn import preprocessing, pipeline, model_selection
 from sklearn.compose import ColumnTransformer
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier, StackingClassifier
 from sklearn.metrics import precision_recall_curve, average_precision_score, PrecisionRecallDisplay
 from sklearn.linear_model import LogisticRegression
-
+from sklearn.base import clone
 
 #directory initialization 
 results_dir = "../results"
@@ -106,7 +107,6 @@ def random_forest_grid_search(rng, cv, x, y, preprocessor):
         scoring=scoring_metrics,
         cv=cv,
         refit=refit_metric, 
-        n_jobs=-1
     )
 
     print(f"Starting Grid Search for Random Forest. Testing {len(param_grid_rf['n_estimators']) * len(param_grid_rf['max_depth']) * len(param_grid_rf['criterion']) * len(param_grid_rf['max_features'])} combinations...")
@@ -147,7 +147,6 @@ def gradient_boosted_grid_search(rng, cv, x, y, preprocessor):
         param_grid=param_grid_gb,
         scoring=['f1',"accuracy"], 
         cv=cv,
-        n_jobs=-1 
     )
 
     grid_search_gb.fit(x, y)
@@ -179,8 +178,7 @@ def knn_grid_search(cv, x, y, preprocessor):
         param_grid=param_grid,
         scoring=scoring_metrics, 
         cv=cv,
-        refit = refit_metric,
-        n_jobs=-1 
+        refit = refit_metric
     )
 
 
@@ -323,6 +321,88 @@ def plot_feature_impact(df, preprocessor, cat_cols, num_cols):
     plt.savefig(plot_path)
     print(f"Plot saved to: {plot_path}")
 
+def plot_feature_importance_cv(df, preprocessor, cat_cols, num_cols):
+    
+    y = df["status"]
+    X_raw = df.drop(columns=["status"])
+
+    skf = model_selection.StratifiedKFold(n_splits=5, shuffle=True, random_state=31)
+
+    fold_results = []
+
+    print("Starting Cross-Validation for Feature Importance...")
+
+    for fold, (train_index, val_index) in enumerate(skf.split(X_raw, y)):
+        # Split Data
+        X_train_raw, X_val_raw = X_raw.iloc[train_index], X_raw.iloc[val_index]
+        y_train, y_val = y.iloc[train_index], y.iloc[val_index]
+        
+        # Clone and Fit Preprocessor on Training Data Only (Prevents Leakage)
+        fold_preprocessor = clone(preprocessor)
+        X_train_processed = fold_preprocessor.fit_transform(X_train_raw)
+        
+        # Retrieve Feature Names (Logic adapted from your snippet)
+        # Note: Ensure the access path matches your specific pipeline structure
+        try:
+            # If preprocessor is a Pipeline containing a step named 'preprocessor'
+            cat_names = fold_preprocessor.named_steps['preprocessor'].named_transformers_['cat'].get_feature_names_out(cat_cols)
+        except AttributeError:
+            # Fallback: If preprocessor is directly a ColumnTransformer
+            cat_names = fold_preprocessor.named_transformers_['cat'].get_feature_names_out(cat_cols)
+            
+        feature_names = list(cat_names) + num_cols
+        
+        # Train Model
+        clf = GradientBoostingClassifier(n_estimators=100, learning_rate=0.5, max_depth=4, random_state=31)
+        clf.fit(X_train_processed, y_train)
+        
+        # Calculate Impact & Direction
+        importances = clf.feature_importances_
+        
+        # Convert to dense for correlation calculation
+        X_dense = X_train_processed.toarray() if hasattr(X_train_processed, "toarray") else X_train_processed
+        
+        # Calculate correlation between feature and target for this fold
+        correlations = [np.corrcoef(X_dense[:, i], y_train)[0, 1] for i in range(X_dense.shape[1])]
+        
+        # Store results for this fold
+        for feat, imp, corr in zip(feature_names, importances, correlations):
+            fold_results.append({
+                'Fold': fold,
+                'Feature': feat,
+                'Importance': imp,
+                'Correlation': corr
+            })
+
+    # Create DataFrame from all folds
+    impact_df = pd.DataFrame(fold_results)
+
+    # --- Filtering Strategy ---
+    # 1. Group by Feature to get Mean Correlation
+    # 2. Keep features where the Average Correlation is Positive (Drivers of No-Show)
+    avg_stats = impact_df.groupby('Feature').agg({'Importance':'mean', 'Correlation':'mean'}).reset_index()
+    positive_drivers = avg_stats[avg_stats['Correlation'] > 0]['Feature'].tolist()
+
+    # Filter the main DF to only include these positive drivers
+    plot_df = impact_df[impact_df['Feature'].isin(positive_drivers)]
+
+    # Sort by Mean Importance for clean plotting
+    order = plot_df.groupby("Feature")["Importance"].mean().sort_values(ascending=False).index
+
+    # --- Plotting ---
+    plt.figure(figsize=(12, 10))
+    sns.boxplot(data=plot_df, x='Importance', y='Feature', order=order, palette='magma', showfliers=False)
+
+    plt.title("Feature Importance Stability (5-Fold CV)\nTop Risk Factors for No-Shows", fontsize=16)
+    plt.xlabel("Feature Importance (Gini)", fontsize=12)
+    plt.ylabel("Feature", fontsize=12)
+    plt.grid(axis='x', linestyle='--', alpha=0.5)
+
+    plt.tight_layout()
+    plot_path = os.path.join(results_dir, "feature_impact_per_fold.png")
+    plt.savefig(plot_path)
+    print(f"CV Plot saved to: {plot_path}")
+
 def run_ensemble_improvements(rng, cv, x, y, preprocessor):
     
     rf = RandomForestClassifier(n_estimators=100, max_depth=4, random_state=rng, criterion="gini")
@@ -386,6 +466,19 @@ def run_ensemble_improvements(rng, cv, x, y, preprocessor):
     return pd.DataFrame(results)
     
 if __name__ == "__main__": 
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    results_dir = os.path.join(script_dir, '..', 'results')
+    data_dir = os.path.join(script_dir, '..', 'data')
+    filepath = os.path.join(data_dir, "appointments.tar.xz")
+    output_dir = os.path.join(data_dir, "extracted_data", "appointments")
+
+    os.makedirs(results_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+
+    print(f"Results will be saved to: {results_dir}")
+
     appointments_df, participants_df = load_data(filepath, output_dir)
     combined_df = merge_data(appointments_df, participants_df)
     
@@ -393,20 +486,21 @@ if __name__ == "__main__":
     preprocessor, combined_df_processed, cat_cols, num_cols = data_process_pipeline(combined_df) 
     rng, cv, x, y = initialize_constants(combined_df_processed)
 
-    # Note: You now pass the preprocessor to the grid search functions
+    # Note: Only run the grid search if needed as it is computationally expensive and takes times
+    # The optimal hyperparameters have already been determined and are used in the best_hyperparam_run function
     # random_forest_grid_search(rng, cv, x, y, preprocessor)
     # gradient_boosted_grid_search(rng, cv, x, y, preprocessor)
     # knn_grid_search(cv, x, y, preprocessor)
 
-    results_df = best_hyperparam_run(rng, cv, x, y, preprocessor)
+    # results_df = best_hyperparam_run(rng, cv, x, y, preprocessor)
 
-    pd.set_option('display.float_format', lambda x: '%.4f' % x)
-    print(results_df.sort_values(by="Mean F1 Score", ascending=False).to_markdown(index=False))
+    # pd.set_option('display.float_format', lambda x: '%.4f' % x)
+    # print(results_df.sort_values(by="Mean F1 Score", ascending=False).to_markdown(index=False))
 
     plot_pr_curves_cross_val(rng, cv, x, y, preprocessor)
-    plot_feature_impact(combined_df_processed, preprocessor, cat_cols, num_cols)
+    plot_feature_importance_cv(combined_df_processed, preprocessor, cat_cols, num_cols)
 
-    results_df_ensemble = run_ensemble_improvements(rng, cv, x, y, preprocessor)
+    # results_df_ensemble = run_ensemble_improvements(rng, cv, x, y, preprocessor)
     
-    print("\n--- Final Results ---")
-    print(results_df_ensemble.sort_values(by="Avg Precision (AP)", ascending=False).to_markdown(index=False))
+    # print("\n--- Final Results ---")
+    # print(results_df_ensemble.sort_values(by="Avg Precision (AP)", ascending=False).to_markdown(index=False))
