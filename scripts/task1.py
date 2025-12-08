@@ -12,7 +12,6 @@ def read_data(file_path):
         sequences = f.readlines()
     return(sequences)
 
-
 def create_BLOSUM_similairty(sequences):
     aligner = Align.PairwiseAligner()
     aligner.substitution_matrix = Align.substitution_matrices.load("BLOSUM62")
@@ -23,7 +22,6 @@ def create_BLOSUM_similairty(sequences):
     max_scores = np.zeros(nsequence)
     for i in range(nsequence):
         seq = sequences[i].strip()
-        # S_i,i is the maximum score for sequence i
         max_scores[i] = aligner.score(seq, seq)
     
     for i in range(nsequence): 
@@ -55,15 +53,12 @@ def create_graph(normalized_matrix, threshold):
     return graph
 
 def get_global_metrics_table(graph):
-    """
-    Returns a small DataFrame summarizing the whole network structure.
-    """
     metrics = {
         "Node_Count": graph.vcount(),
         "Edge_Count": graph.ecount(),
-        "Density": graph.density(), # How many edges exist vs how many are possible
-        "Transitivity_Global": graph.transitivity_undirected(), # Overall clustering
-        "Diameter": graph.diameter(), # Longest shortest path
+        "Density": graph.density(), 
+        "Transitivity_Global": graph.transitivity_undirected(),
+        "Diameter": graph.diameter(),
         "Average_Path_Length": graph.average_path_length(),
         "Connected_Components": len(graph.connected_components())
     }
@@ -75,25 +70,37 @@ def community_detection_plotting(graph):
     np.random.seed(42)  
     ig.config.random_seed = 42 
 
-    # REMOVE THIS LINE: ig.Graph.Set_attribute_table("default") 
-    # It is obsolete and causes the AttributeError.
-
     script_dir = os.path.dirname(os.path.abspath(__file__))
     output_file = os.path.join(script_dir, "../results/network_clusters.png")
-
-    # Community detection (Infomap is generally deterministic but benefits from seed)
     communities = graph.community_infomap() 
     
-    # Visualization setup
     rainbow = seaborn.color_palette("husl", len(communities))
     colours = [rainbow[communities.membership[v]] for v in graph.vs.indices]
     graph.vs["color"] = colours
     
-    # Plotting using the 'fr' layout (which uses ig.config.random_seed)
+
     ig.plot(graph, bbox=(1280, 1280), layout="fr", target = output_file)
 
 if __name__ == "__main__":
-    sequences = read_data("../data/sequences.txt.xz")
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Define directories relative to the script
+    data_dir = os.path.join(script_dir, '..', 'data')
+    processed_dir = os.path.join(script_dir, '..', 'processed') 
+    results_dir = os.path.join(script_dir, '..', 'results')
+    
+    # Ensure results directory exists
+    os.makedirs(results_dir, exist_ok=True)
+    
+    # Define specific file paths
+    # UPDATED: Now points to processed directory
+    input_file = os.path.join(data_dir, "sequences.txt.xz")
+    output_image = os.path.join(results_dir, "network_clusters.png")
+
+    print(f"Reading data from: {input_file}")
+
+    sequences = read_data(input_file)
     print(f"Loaded {len(sequences)} sequences.")
 
     blosum_matrix = create_BLOSUM_similairty(sequences=sequences)

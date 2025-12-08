@@ -555,17 +555,23 @@ def plot_cv_history(history_list, save_path=None):
 if __name__ == "__main__": 
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(script_dir, '..', 'data')
+    processed_dir = os.path.join(script_dir, '..', 'processed') 
     results_dir = os.path.join(script_dir, '..', 'results')
     os.makedirs(results_dir, exist_ok=True)
-    
-    print(f"Results will be saved to: {results_dir}")
+    os.makedirs(processed_dir, exist_ok=True)
 
-    filepath = "../data/cath.tar.xz"
-    output_dir = "../data/extracted_data/cath"
+    print(f"Results will be saved to: {results_dir}")
+    filepath = os.path.join(data_dir, "cath.tar.xz")
+    output_dir = os.path.join(processed_dir, "cath")
     os.makedirs(output_dir, exist_ok=True)
-    FN_DOMAIN_LIST = '../data/extracted_data/cath/proteins/domain_classification.txt'
-    FN_SF_NAMES = '../data/extracted_data/cath/proteins/superfamily_names.txt'
-    FN_SEQ_S60 = '../data/extracted_data/cath/proteins/seqs_S60.fa'
+    proteins_dir = os.path.join(output_dir, 'proteins')
+    
+    FN_DOMAIN_LIST = os.path.join(proteins_dir, 'domain_classification.txt')
+    FN_SF_NAMES = os.path.join(proteins_dir, 'superfamily_names.txt')
+    FN_SEQ_S60 = os.path.join(proteins_dir, 'seqs_S60.fa')
+    
+    # For the commented out S40 file
 
     df_merged = load_merge_data(filepath, FN_DOMAIN_LIST, FN_SF_NAMES, FN_SEQ_S60, output_dir)
     final_data, max_len = filter_df(df_merged)

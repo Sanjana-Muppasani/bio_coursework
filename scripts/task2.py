@@ -13,16 +13,24 @@ from sklearn.metrics import f1_score, accuracy_score
 rng = np.random.RandomState(31)
 output_dir = "../results"
 
-def extract_data(file_path, extract_to="../data/extracted_data"):
+def extract_data(file_path, extract_to):
+    os.makedirs(extract_to, exist_ok=True)
+    
     with tarfile.open(file_path, "r:xz") as tar:
         tar.extractall(path=extract_to)
     print(f"Files extracted to: {extract_to}")
 
     data_frames = {}
-    for file_name in os.listdir("../data/extracted_data/visits"):
+    visits_dir = os.path.join(extract_to, "visits")
+    
+    if not os.path.exists(visits_dir):
+        print(f"Warning: Directory {visits_dir} does not exist. Check tar extraction.")
+        return {}
+
+    for file_name in os.listdir(visits_dir):
         if file_name.endswith(".csv"):
             df_name = os.path.splitext(file_name)[0]
-            data_frames[df_name] = pd.read_csv(os.path.join("../data/extracted_data/visits", file_name))
+            data_frames[df_name] = pd.read_csv(os.path.join(visits_dir, file_name))
             print(f"Loaded: {df_name}")
     return data_frames
 
@@ -217,7 +225,20 @@ def logisitic_regression_with_penalty(X, y,rng):
 
 
 if __name__ == "__main__": 
-    dataframes = extract_data("../data/visits.tar.xz")
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    data_dir = os.path.join(script_dir, '..', 'data')
+    processed_dir = os.path.join(script_dir, '..', 'processed') 
+    results_dir = os.path.join(script_dir, '..', 'results')
+    
+    os.makedirs(results_dir, exist_ok=True)
+    os.makedirs(processed_dir, exist_ok=True)
+    
+    print(f"Results will be saved to: {results_dir}")
+    print(f"Data will be extracted to: {processed_dir}")
+    tar_file_path = os.path.join(data_dir, "visits.tar.xz")
+
+    dataframes = extract_data(tar_file_path, processed_dir)
     combined_df = combine_data(data_frames=dataframes)
     cleaned_data = clean_data(combined_df)
     data = handle_nominal_and_ordinal(cleaned_data)

@@ -26,13 +26,15 @@ def load_data(filepath, output_dir):
                 if member.name.endswith(".txt"):
                     extracted_file = tar.extractfile(member)
                     if extracted_file is not None:
+                        # Saves to project/processed/appointments/...
                         output_path = os.path.join(output_dir, os.path.basename(member.name))
                         with open(output_path, "wb") as output_file:
                             output_file.write(extracted_file.read())
                         print(f"File extracted and saved to: {output_path}")
-
-    appointments_path = "../data/extracted_data/appointments/appointments.txt"
-    participants_path = "../data/extracted_data/appointments/participants.txt"
+                        
+    appointments_path = os.path.join(output_dir, "appointments.txt")
+    participants_path = os.path.join(output_dir, "participants.txt")
+    
     appointments_df = pd.read_csv(appointments_path, sep=r'\s+')
     participants_df = pd.read_csv(participants_path, sep=r'\s+')
 
@@ -468,14 +470,17 @@ def run_ensemble_improvements(rng, cv, x, y, preprocessor):
 if __name__ == "__main__": 
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
-
-    results_dir = os.path.join(script_dir, '..', 'results')
+    
+    # Define base directories
     data_dir = os.path.join(script_dir, '..', 'data')
+    processed_dir = os.path.join(script_dir, '..', 'processed') 
+    results_dir = os.path.join(script_dir, '..', 'results')
     filepath = os.path.join(data_dir, "appointments.tar.xz")
-    output_dir = os.path.join(data_dir, "extracted_data", "appointments")
-
+    output_dir = os.path.join(processed_dir, "appointments")
     os.makedirs(results_dir, exist_ok=True)
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True) # Creates project/processed/appointments
+    
+    print(f"Extraction target: {output_dir}")
 
     print(f"Results will be saved to: {results_dir}")
 

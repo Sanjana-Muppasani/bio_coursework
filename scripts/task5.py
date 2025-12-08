@@ -23,18 +23,18 @@ def extract_zip(zip_path, extract_to):
         zip_ref.extractall(extract_to)
         print(f"Extracted all files from {os.path.abspath(zip_path)} to {os.path.abspath(extract_to)}.")
 
-def load_data(normalization="no", preprocessing="no"):
+def load_data(data_dir, normalization="no", preprocessing="no"):
     IMG_SIZE =  (150, 150)
 
     train_ds = keras.utils.image_dataset_from_directory(
-        '../data/extracted_data/train_sample2',
+        os.path.join(data_dir, 'train_sample2'),
         image_size= IMG_SIZE,
         batch_size = batch_size,
         label_mode="categorical"
     )
 
     test_ds = keras.utils.image_dataset_from_directory(
-        '../data/extracted_data/test',
+        os.path.join(data_dir, 'test'),
         image_size= IMG_SIZE,
         batch_size = batch_size,
         label_mode="categorical",
@@ -42,7 +42,7 @@ def load_data(normalization="no", preprocessing="no"):
     )
 
     val_ds = keras.utils.image_dataset_from_directory(
-        '../data/extracted_data/val',
+        os.path.join(data_dir, 'val'),
         image_size= IMG_SIZE,
         batch_size = batch_size,
         label_mode="categorical"
@@ -363,22 +363,27 @@ def shap_explain(model):
     print(f"Saved SHAP explanation to: {save_path}")
 
 if __name__ == "__main__": 
+    
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    results_dir = os.path.join(script_dir, '..', 'results')
     data_dir = os.path.join(script_dir, '..', 'data')
+    processed_dir = os.path.join(script_dir, '..', 'processed')
+    results_dir = os.path.join(script_dir, '..', 'results')
     os.makedirs(results_dir, exist_ok=True)
-    print(f"Saving results to: {results_dir}")
+    os.makedirs(processed_dir, exist_ok=True)
 
+    print(f"Results will be saved to: {results_dir}")
     zip_path = os.path.join(data_dir, "retinal-oct-sample.zip")
-    extracted_data_dir = os.path.join(data_dir, 'extracted_data')
+    
+   
+    dataset_dir = os.path.join(processed_dir, "retinal_oct")
 
     batch_size = 128
     epochs = 15
     num_classes = 4
     input_shape = (150, 150, 3)
 
-    extract_zip(zip_path, extracted_data_dir)
-    train_ds, val_ds, test_ds = load_data(normalization="yes", preprocessing="no") 
+    extract_zip(zip_path, dataset_dir)
+    train_ds, val_ds, test_ds = load_data(dataset_dir, normalization="yes", preprocessing="no") 
     cnn_model = custom_cnn()
 
     # tune_cnn(train_ds, val_ds) #uncomment and run to find the best combination of hyper params 
