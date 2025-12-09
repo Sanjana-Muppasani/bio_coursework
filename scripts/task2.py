@@ -9,6 +9,7 @@ from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import f1_score, accuracy_score
+import plotly.express as px
 
 rng = np.random.RandomState(31)
 output_dir = "../results"
@@ -96,12 +97,34 @@ def create_target_variable(df):
     return df_final
 
 def plot_disease_progression(df_final):
-    plt.figure(figsize=(10, 6))
-    sns.lineplot(data=df_final, x='visit', y='CDR_numeric')
-    plt.title('Disease Progression Over Time')
+    plt.figure(figsize=(12, 7))
+    
+    # Create a copy to avoid modifying the actual dataframe
+    plot_df = df_final.copy()
+    
+    # --- FIX: Ensure the column is float, not category ---
+    plot_df['CDR_numeric'] = plot_df['CDR_numeric'].astype(float)
+    
+    # Jittering (Adding Noise)
+    rng = np.random.RandomState(42)
+    noise_level = 0.05
+    
+    # Now this addition will work because both are numbers
+    plot_df['visit_jitter'] = plot_df['visit'] + rng.normal(0, noise_level, size=len(plot_df))
+    plot_df['cdr_jitter'] = plot_df['CDR_numeric'] + rng.normal(0, noise_level, size=len(plot_df))
+
+    # Plot individuals using the jittered coordinates
+    sns.lineplot(data=plot_df, x='visit_jitter', y='cdr_jitter', 
+                 units='ID', estimator=None, alpha=0.2, color='#4c72b0', linewidth=1)
+    
+    sns.lineplot(data=df_final, x='visit', y='CDR_numeric', 
+                 color='#c44e52', linewidth=3, label='Population Mean')
+
+    plt.title('Individual Disease Progression (Jittered)')
     plt.xlabel('Visit')
-    plt.ylabel('CDR_numeric')
-    plt.grid(True)
+    plt.ylabel('CDR Score')
+    plt.yticks([0, 0.5, 1, 2, 3]) 
+    plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "disease_progression.png"), dpi=300)
     plt.close()

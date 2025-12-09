@@ -9,7 +9,7 @@ from sklearn import preprocessing, pipeline, model_selection
 from sklearn.compose import ColumnTransformer
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier, StackingClassifier
-from sklearn.metrics import precision_recall_curve, average_precision_score, PrecisionRecallDisplay
+from sklearn.metrics import precision_recall_curve, average_precision_score, confusion_matrix, ConfusionMatrixDisplay
 from sklearn.linear_model import LogisticRegression
 from sklearn.base import clone
 
@@ -335,39 +335,27 @@ def plot_feature_importance_cv(df, preprocessor, cat_cols, num_cols):
     print("Starting Cross-Validation for Feature Importance...")
 
     for fold, (train_index, val_index) in enumerate(skf.split(X_raw, y)):
-        # Split Data
         X_train_raw, X_val_raw = X_raw.iloc[train_index], X_raw.iloc[val_index]
         y_train, y_val = y.iloc[train_index], y.iloc[val_index]
         
-        # Clone and Fit Preprocessor on Training Data Only (Prevents Leakage)
         fold_preprocessor = clone(preprocessor)
         X_train_processed = fold_preprocessor.fit_transform(X_train_raw)
-        
-        # Retrieve Feature Names (Logic adapted from your snippet)
-        # Note: Ensure the access path matches your specific pipeline structure
+
         try:
-            # If preprocessor is a Pipeline containing a step named 'preprocessor'
             cat_names = fold_preprocessor.named_steps['preprocessor'].named_transformers_['cat'].get_feature_names_out(cat_cols)
         except AttributeError:
-            # Fallback: If preprocessor is directly a ColumnTransformer
             cat_names = fold_preprocessor.named_transformers_['cat'].get_feature_names_out(cat_cols)
             
         feature_names = list(cat_names) + num_cols
         
-        # Train Model
         clf = GradientBoostingClassifier(n_estimators=100, learning_rate=0.5, max_depth=4, random_state=31)
         clf.fit(X_train_processed, y_train)
         
-        # Calculate Impact & Direction
         importances = clf.feature_importances_
-        
-        # Convert to dense for correlation calculation
+    
         X_dense = X_train_processed.toarray() if hasattr(X_train_processed, "toarray") else X_train_processed
-        
-        # Calculate correlation between feature and target for this fold
         correlations = [np.corrcoef(X_dense[:, i], y_train)[0, 1] for i in range(X_dense.shape[1])]
         
-        # Store results for this fold
         for feat, imp, corr in zip(feature_names, importances, correlations):
             fold_results.append({
                 'Fold': fold,
@@ -379,16 +367,11 @@ def plot_feature_importance_cv(df, preprocessor, cat_cols, num_cols):
     # Create DataFrame from all folds
     impact_df = pd.DataFrame(fold_results)
 
-    # --- Filtering Strategy ---
-    # 1. Group by Feature to get Mean Correlation
-    # 2. Keep features where the Average Correlation is Positive (Drivers of No-Show)
     avg_stats = impact_df.groupby('Feature').agg({'Importance':'mean', 'Correlation':'mean'}).reset_index()
     positive_drivers = avg_stats[avg_stats['Correlation'] > 0]['Feature'].tolist()
 
-    # Filter the main DF to only include these positive drivers
     plot_df = impact_df[impact_df['Feature'].isin(positive_drivers)]
 
-    # Sort by Mean Importance for clean plotting
     order = plot_df.groupby("Feature")["Importance"].mean().sort_values(ascending=False).index
 
     # --- Plotting ---
@@ -466,6 +449,80 @@ def run_ensemble_improvements(rng, cv, x, y, preprocessor):
         print(f"Finished evaluating: {name}")
 
     return pd.DataFrame(results)
+
+def plot_pooled_confusion_matrix(rng, cv, x, y, preprocessor):
+
+    print("\n--- Generating Pooled Confusion Matrix ---")
+    clf = GradientBoostingClassifier(
+        n_estimators=100, 
+        learning_rate=0.5, 
+        max_depth=4, 
+        random_state=rng
+    )
+
+    full_pipeline = pipeline.Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('classifier', clf)
+    ])
+    y_pred = model_selection.cross_val_predict(full_pipeline, x, y, cv=cv, n_jobs=-1)
+    cm = confusion_matrix(y, y_pred)
+    fig, ax = plt.subplots(figsize=(8, 6))
+    display_labels = ["Fulfilled", "No-Show"]
+    
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=display_labels)
+    disp.plot(cmap='Blues', ax=ax, values_format='d')
+
+    plt.title("Pooled Confusion Matrix (Gradient Boosting)\nAggregated across 10 Test Folds")
+    plot_path = os.path.join(results_dir, "pooled_confusion_matrix.png")
+    plt.savefig(plot_path)
+    print(f"Confusion Matrix saved to: {plot_path}")
+
+def plot_learning_curves(rng, cv, x, y, preprocessor):
+    print("\n--- Generating Learning Curves (this will take time) ---")
+    clf = GradientBoostingClassifier(
+        n_estimators=100, 
+        learning_rate=0.5, 
+        max_depth=4, 
+        random_state=rng
+    )
+    
+    full_pipeline = pipeline.Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('classifier', clf)
+    ])
+    train_sizes, train_scores, test_scores = model_selection.learning_curve(
+        full_pipeline, 
+        x, 
+        y, 
+        cv=cv, 
+        scoring='f1',
+        n_jobs=-1, 
+        train_sizes=np.linspace(0.1, 1.0, 5),
+        shuffle=True
+    )
+
+    train_scores_mean = np.mean(train_scores, axis=1)
+    train_scores_std = np.std(train_scores, axis=1)
+    test_scores_mean = np.mean(test_scores, axis=1)
+    test_scores_std = np.std(test_scores, axis=1)
+
+    plt.figure(figsize=(10, 6))
+    plt.title("Learning Curves (Gradient Boosting)", fontsize=14)
+    plt.xlabel("Training Examples", fontsize=12)
+    plt.ylabel("F1 Score", fontsize=12)
+    
+    plt.grid(alpha=0.3)
+    plt.fill_between(train_sizes, train_scores_mean - train_scores_std,
+                     train_scores_mean + train_scores_std, alpha=0.1, color="r")
+    plt.plot(train_sizes, train_scores_mean, 'o-', color="r", label="Training Score")
+    plt.fill_between(train_sizes, test_scores_mean - test_scores_std,
+                     test_scores_mean + test_scores_std, alpha=0.1, color="g")
+    plt.plot(train_sizes, test_scores_mean, 'o-', color="g", label="Cross-Validation Score")
+
+    plt.legend(loc="best")
+    plot_path = os.path.join(results_dir, "learning_curves.png")
+    plt.savefig(plot_path)
+    print(f"Learning Curves saved to: {plot_path}")
     
 if __name__ == "__main__": 
 
@@ -502,9 +559,10 @@ if __name__ == "__main__":
     # pd.set_option('display.float_format', lambda x: '%.4f' % x)
     # print(results_df.sort_values(by="Mean F1 Score", ascending=False).to_markdown(index=False))
 
-    plot_pr_curves_cross_val(rng, cv, x, y, preprocessor)
-    plot_feature_importance_cv(combined_df_processed, preprocessor, cat_cols, num_cols)
-
+    # plot_pr_curves_cross_val(rng, cv, x, y, preprocessor)
+    # plot_feature_importance_cv(combined_df_processed, preprocessor, cat_cols, num_cols)
+    #plot_pooled_confusion_matrix(rng, cv, x, y, preprocessor)
+    plot_learning_curves(rng, cv, x, y, preprocessor)
     # results_df_ensemble = run_ensemble_improvements(rng, cv, x, y, preprocessor)
     
     # print("\n--- Final Results ---")
