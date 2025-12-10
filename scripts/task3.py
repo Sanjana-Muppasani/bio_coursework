@@ -281,48 +281,6 @@ def plot_pr_curves_cross_val(rng, cv, x, y, preprocessor):
     plt.savefig(plot_path)
     print(f"PR Curve plot saved to: {plot_path}")
 
-def plot_feature_impact(df, preprocessor, cat_cols, num_cols):
-    
-    y = df["status"]
-    X_raw = df.drop(columns=["status"])
-    
-    # Fit the pipeline
-    X_processed = preprocessor.fit_transform(X_raw)
-        
-    # Now access named_transformers_ on the correct object
-    cat_names = preprocessor.named_steps['preprocessor'].named_transformers_['cat'].get_feature_names_out(cat_cols)
-    feature_names = list(cat_names) + num_cols
-    
-    # Train Best Model
-    clf = GradientBoostingClassifier(n_estimators=100, learning_rate=0.5, max_depth=4, random_state=31)
-    clf.fit(X_processed, y)
-    
-    # Calculate Impact & Direction
-    importances = clf.feature_importances_
-    X_dense = X_processed.toarray() if hasattr(X_processed, "toarray") else X_processed
-    correlations = [np.corrcoef(X_dense[:, i], y)[0, 1] for i in range(X_dense.shape[1])]
-    
-    impact_df = pd.DataFrame({
-        'Feature': feature_names,
-        'Importance': importances,
-        'Correlation': correlations
-    })
-    
-    # Filter: Only keep features that DRIVE No-Shows (Positive Correlation)
-    impact_df = impact_df[impact_df['Correlation'] > 0].sort_values(by='Importance', ascending=True)
-    
-    plt.figure(figsize=(10, 8))
-    plt.barh(impact_df['Feature'], impact_df['Importance'])
-    
-    plt.title("Top Risk Factors for No-Shows (Positive Drivers Only)", fontsize=14)
-    plt.xlabel("Feature Importance (Gini)", fontsize=12)
-    plt.grid(axis='x', linestyle='--', alpha=0.5)
-    
-    plt.tight_layout()
-    plot_path = os.path.join(results_dir, "feature_impact_noshow_only.png")
-    plt.savefig(plot_path)
-    print(f"Plot saved to: {plot_path}")
-
 def plot_feature_importance_cv(df, preprocessor, cat_cols, num_cols):
     
     y = df["status"]
@@ -376,7 +334,16 @@ def plot_feature_importance_cv(df, preprocessor, cat_cols, num_cols):
 
     # --- Plotting ---
     plt.figure(figsize=(12, 10))
-    sns.boxplot(data=plot_df, x='Importance', y='Feature', order=order, palette='magma', showfliers=False)
+    sns.barplot(
+        data=plot_df, 
+        x='Importance', 
+        y='Feature', 
+        order=order, 
+        palette='magma', 
+        errorbar='sd' 
+    )
+    
+    plt.title("Feature Importance (Mean ± Std Dev)", fontsize=16)
 
     plt.title("Feature Importance Stability (5-Fold CV)\nTop Risk Factors for No-Shows", fontsize=16)
     plt.xlabel("Feature Importance (Gini)", fontsize=12)
@@ -535,7 +502,7 @@ if __name__ == "__main__":
     filepath = os.path.join(data_dir, "appointments.tar.xz")
     output_dir = os.path.join(processed_dir, "appointments")
     os.makedirs(results_dir, exist_ok=True)
-    os.makedirs(output_dir, exist_ok=True) # Creates project/processed/appointments
+    os.makedirs(output_dir, exist_ok=True) 
     
     print(f"Extraction target: {output_dir}")
 
@@ -554,16 +521,16 @@ if __name__ == "__main__":
     # gradient_boosted_grid_search(rng, cv, x, y, preprocessor)
     # knn_grid_search(cv, x, y, preprocessor)
 
-    # results_df = best_hyperparam_run(rng, cv, x, y, preprocessor)
+    results_df = best_hyperparam_run(rng, cv, x, y, preprocessor)
 
-    # pd.set_option('display.float_format', lambda x: '%.4f' % x)
-    # print(results_df.sort_values(by="Mean F1 Score", ascending=False).to_markdown(index=False))
+    pd.set_option('display.float_format', lambda x: '%.4f' % x)
+    print(results_df.sort_values(by="Mean F1 Score", ascending=False).to_markdown(index=False))
 
-    # plot_pr_curves_cross_val(rng, cv, x, y, preprocessor)
-    # plot_feature_importance_cv(combined_df_processed, preprocessor, cat_cols, num_cols)
-    #plot_pooled_confusion_matrix(rng, cv, x, y, preprocessor)
+    plot_pr_curves_cross_val(rng, cv, x, y, preprocessor)
+    plot_feature_importance_cv(combined_df_processed, preprocessor, cat_cols, num_cols)
+    plot_pooled_confusion_matrix(rng, cv, x, y, preprocessor)
     plot_learning_curves(rng, cv, x, y, preprocessor)
-    # results_df_ensemble = run_ensemble_improvements(rng, cv, x, y, preprocessor)
+    results_df_ensemble = run_ensemble_improvements(rng, cv, x, y, preprocessor)
     
-    # print("\n--- Final Results ---")
-    # print(results_df_ensemble.sort_values(by="Avg Precision (AP)", ascending=False).to_markdown(index=False))
+    print("\n--- Final Results ---")
+    print(results_df_ensemble.sort_values(by="Avg Precision (AP)", ascending=False).to_markdown(index=False))
