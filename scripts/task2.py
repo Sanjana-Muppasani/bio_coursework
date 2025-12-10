@@ -11,9 +11,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import f1_score, accuracy_score
 import plotly.express as px
 
-rng = np.random.RandomState(31)
-output_dir = "../results"
-
 def extract_data(file_path, extract_to):
     os.makedirs(extract_to, exist_ok=True)
     
@@ -80,20 +77,21 @@ def handle_nominal_and_ordinal(df):
 def create_target_variable(df):
     def parse_cdr(val):
         mapping = {
-            'none': 0.0,
-            'very mild': 0.5,
-            'mild': 1.0,
-            'moderate': 2.0,
-            'severe': 3.0
+            'none': 0.0, 'very mild': 0.5, 'mild': 1.0,
+            'moderate': 2.0, 'severe': 3.0
         }
         return mapping.get(str(val).lower(), np.nan)
 
-    combined_df['CDR_numeric'] = combined_df['CDR'].apply(parse_cdr)
-    baseline_cdr = combined_df[combined_df['visit'] == 1][['ID', 'CDR_numeric']].rename(columns={'CDR_numeric': 'baseline_CDR'})
-    max_cdr = combined_df.groupby('ID')['CDR_numeric'].max().reset_index().rename(columns={'CDR_numeric': 'max_CDR'})
-    target_df = pd.merge(baseline_cdr, max_cdr, on='ID')
-    target_df['worsened'] = (target_df['max_CDR'] > target_df['baseline_CDR']).astype(int)
-    df_final = pd.merge(combined_df, target_df[['ID', 'worsened']], on='ID', how='left')
+    df['CDR_numeric'] = df['CDR'].apply(parse_cdr)
+    
+    baseline_df = df[df['visit'] == 1][['ID', 'CDR_numeric']].rename(columns={'CDR_numeric': 'baseline_CDR'})
+    
+    last_visit_df = df.sort_values('visit').groupby('ID').tail(1)[['ID', 'CDR_numeric']]
+    last_visit_df = last_visit_df.rename(columns={'CDR_numeric': 'final_CDR'})
+    target_df = pd.merge(baseline_df, last_visit_df, on='ID')
+    target_df['worsened'] = (target_df['final_CDR'] > target_df['baseline_CDR']).astype(int)
+    df_final = pd.merge(df, target_df[['ID', 'worsened']], on='ID', how='left')
+    
     return df_final
 
 def plot_disease_progression(df_final):
@@ -106,7 +104,6 @@ def plot_disease_progression(df_final):
     plot_df['CDR_numeric'] = plot_df['CDR_numeric'].astype(float)
     
     # Jittering (Adding Noise)
-    rng = np.random.RandomState(42)
     noise_level = 0.05
     
     # Now this addition will work because both are numbers
@@ -248,6 +245,9 @@ def logisitic_regression_with_penalty(X, y,rng):
 
 
 if __name__ == "__main__": 
+
+    rng = np.random.RandomState(31)
+    output_dir = "../results"
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(script_dir, '..', 'data')

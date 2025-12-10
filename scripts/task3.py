@@ -484,7 +484,7 @@ def plot_learning_curves(rng, cv, x, y, preprocessor):
     plt.plot(train_sizes, train_scores_mean, 'o-', color="r", label="Training Score")
     plt.fill_between(train_sizes, test_scores_mean - test_scores_std,
                      test_scores_mean + test_scores_std, alpha=0.1, color="g")
-    plt.plot(train_sizes, test_scores_mean, 'o-', color="g", label="Cross-Validation Score")
+    plt.plot(train_sizes, test_scores_mean, 'o-', color="g", label="Test Score")
 
     plt.legend(loc="best")
     plot_path = os.path.join(results_dir, "learning_curves.png")
@@ -521,16 +521,16 @@ if __name__ == "__main__":
     # gradient_boosted_grid_search(rng, cv, x, y, preprocessor)
     # knn_grid_search(cv, x, y, preprocessor)
 
-    results_df = best_hyperparam_run(rng, cv, x, y, preprocessor)
+    # results_df = best_hyperparam_run(rng, cv, x, y, preprocessor)
 
-    pd.set_option('display.float_format', lambda x: '%.4f' % x)
-    print(results_df.sort_values(by="Mean F1 Score", ascending=False).to_markdown(index=False))
+    # pd.set_option('display.float_format', lambda x: '%.4f' % x)
+    # print(results_df.sort_values(by="Mean F1 Score", ascending=False).to_markdown(index=False))
 
-    plot_pr_curves_cross_val(rng, cv, x, y, preprocessor)
-    plot_feature_importance_cv(combined_df_processed, preprocessor, cat_cols, num_cols)
-    plot_pooled_confusion_matrix(rng, cv, x, y, preprocessor)
+    # plot_pr_curves_cross_val(rng, cv, x, y, preprocessor)
+    # plot_feature_importance_cv(combined_df_processed, preprocessor, cat_cols, num_cols)
+    # plot_pooled_confusion_matrix(rng, cv, x, y, preprocessor)
     plot_learning_curves(rng, cv, x, y, preprocessor)
-    results_df_ensemble = run_ensemble_improvements(rng, cv, x, y, preprocessor)
+    # results_df_ensemble = run_ensemble_improvements(rng, cv, x, y, preprocessor)
     
-    print("\n--- Final Results ---")
-    print(results_df_ensemble.sort_values(by="Avg Precision (AP)", ascending=False).to_markdown(index=False))
+    # print("\n--- Final Results ---")
+    # print(results_df_ensemble.sort_values(by="Avg Precision (AP)", ascending=False).to_markdown(index=False))
